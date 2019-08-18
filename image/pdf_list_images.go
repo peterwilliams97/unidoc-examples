@@ -35,7 +35,7 @@ func main() {
 		err := listImages(inputPath)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			continue
 		}
 	}
 

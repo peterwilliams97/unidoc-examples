@@ -56,7 +56,7 @@ func addWatermarkImage(inputPath string, outputPath string, watermarkPath string
 	}
 	defer f.Close()
 
-	pdfReader, err := pdf.NewPdfReader(f)
+	pdfReader, err := pdf.NewPdfReaderLazy(f)
 	if err != nil {
 		return err
 	}
@@ -66,9 +66,7 @@ func addWatermarkImage(inputPath string, outputPath string, watermarkPath string
 		return err
 	}
 
-	for i := 0; i < numPages; i++ {
-		pageNum := i + 1
-
+	for pageNum := 1; pageNum <= numPages; pageNum++ {
 		// Read the page.
 		page, err := pdfReader.GetPage(pageNum)
 		if err != nil {
