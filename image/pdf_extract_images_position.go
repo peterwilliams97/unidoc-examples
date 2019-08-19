@@ -23,6 +23,7 @@
  *
  * Run as: go run pdf_extract_native_images.go input.pdf output.folder
 
+
     ~/testdata/misc/rotate_2.pdf  Images with different orientations.
 
     Clipped image
@@ -67,17 +68,6 @@ import (
 	pdf "github.com/unidoc/unipdf/v3/model"
 )
 
-/*
- 0: "~/testdata/programming/pdf_text/300bw.pdf"
-    1: "~/testdata/programming/pdf_text/test600color.pdf"
-    2: "~/testdata/programming/pdf_text/600bw.pdf"
-    3: "~/testdata/programming/pdf_text/300color.pdf"
-954 of 1144:  1 "Tesseract 3.05.00"
-    0: "~/testdata/programming/pdf_text/z.pdf"
-955 of 1144:  1 "Tesseract 3.05.01"
-    0: "~/testdata/programming/pdf_text/papercut-mf-fact-sheet-a4-2017-03-07.pdf-tesseract.pdf"
-*/
-
 const usage = "Usage: go run df_extract_images.go input.pdf output.folder\n"
 
 func main() {
@@ -92,12 +82,12 @@ func main() {
 		`)
 	*/
 	var debug, trace bool
-	outputDir := "/Users/peter/extracted.images"
+	var outputDir string
 	var pageNum, imageNum int
 	var unscaled bool
 	flag.BoolVar(&debug, "d", false, "Print debugging information.")
 	flag.BoolVar(&trace, "e", false, "Print detailed debugging information.")
-	flag.StringVar(&outputDir, "o", outputDir, "Directory where extracted images are saved.")
+	flag.StringVar(&outputDir, "o", "extracted.images", "Directory where extracted images are saved.")
 	flag.IntVar(&pageNum, "p", 0, "Extract images only from this page number (1-offset).")
 	flag.IntVar(&imageNum, "i", 0, "Extract images only with this image number (1-offset).")
 	flag.BoolVar(&unscaled, "s", false, "Don't rescale.")
@@ -120,13 +110,13 @@ func main() {
 
 	for i, inputPath := range args {
 		fmt.Printf("%d of %d ----------------------------------\n", i+1, len(args))
-		fmt.Printf("Input file: %s\n", inputPath)
+	fmt.Printf("Input file: %s\n", inputPath)
 		fmt.Printf("Output dir: %s\n", outputDir)
-		err := extractImagesToFolder(inputPath, outputDir, pageNum, imageNum, unscaled)
-		if err != nil {
-			fmt.Printf("ERROR: Could not process inputPath=%q outputDir=%q err=%v\n",
-				inputPath, outputDir, err)
-			os.Exit(1)
+	err := extractImagesToFolder(inputPath, outputDir, pageNum, imageNum, unscaled)
+	if err != nil {
+		fmt.Printf("ERROR: Could not process inputPath=%q outputDir=%q err=%v\n",
+			inputPath, outputDir, err)
+		os.Exit(1)
 		}
 	}
 }
@@ -177,8 +167,6 @@ func extractImagesToFolder(inputPath, outputDir string, pageN, imageN int, unsca
 		}
 	}
 
-	common.Log.Info("outputDir=%q", outputDir)
-
 	name := filepath.Base(inputPath)
 	{
 		ext := filepath.Ext(name)
@@ -200,7 +188,6 @@ func extractImagesToFolder(inputPath, outputDir string, pageN, imageN int, unsca
 		if err != nil {
 			return err
 		}
-
 
 		mbox, err := page.GetMediaBox()
 		if err != nil {
