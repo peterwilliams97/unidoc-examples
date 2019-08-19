@@ -13,4 +13,3 @@ require (
 	golang.org/x/crypto v0.0.0-20190605123033-f99c8df09eb5
 	golang.org/x/image v0.0.0-20190703141733-d6a02ce849c9 // indirect
 )
-
