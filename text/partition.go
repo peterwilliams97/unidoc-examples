@@ -7,6 +7,9 @@
  *
  * Run as: go run split_columns.go -m all -mf markup.pdf table.pdf
  * - Outputs debug markup including: marks, words, lines, columns to markup.pdf
+ *
+ * References
+ * https://www.dfki.de/fileadmin/user_upload/import/2000_HighPerfDocLayoutAna.pdf
  */
 
 package main
@@ -47,8 +50,12 @@ const (
 	// environment variables,  where UNIPDF_LICENSE_PATH points to the file containing the license
 	// key and the UNIPDF_CUSTOMER_NAME the explicitly specified customer name to which the key is
 	// licensed.
-	uniDocLicenseKey = ``
-	companyName      = ""
+	uniDocLicenseKey = `-----BEGIN UNIDOC LICENSE KEY-----
+eyJsaWNlbnNlX2lkIjoiYjZjNTllZGEtMGM5NC00MjMzLTYxZmMtYzE5NjdkODgwY2QzIiwiY3VzdG9tZXJfaWQiOiJjZDNlZmJiZi05NDIyLTQ0ZjEtNTcxYy05NzgyMmNkYWFlMjEiLCJjdXN0b21lcl9uYW1lIjoiUGFwZXJDdXQgU29mdHdhcmUgSW50ZXJuYXRpb25hbCBQdHkgTHRkIiwiY3VzdG9tZXJfZW1haWwiOiJhY2NvdW50c0BwYXBlcmN1dC5jb20iLCJ0aWVyIjoiYnVzaW5lc3MiLCJjcmVhdGVkX2F0IjoxNTYxNjY1NjI5LCJleHBpcmVzX2F0IjoxNTkzMzAyMzk5LCJjcmVhdG9yX25hbWUiOiJVbmlEb2MgU3VwcG9ydCIsImNyZWF0b3JfZW1haWwiOiJzdXBwb3J0QHVuaWRvYy5pbyIsInVuaXBkZiI6dHJ1ZSwidW5pb2ZmaWNlIjpmYWxzZSwidHJpYWwiOmZhbHNlfQ==
++
+jqfCPGZxtGEQ1hFui9dQLB9iPUhS715HPRW30eYpfiDKaM3SEpThz/GCLNj4dO3aZmE9UHF+ir4BRnOIA8lymRL8Y+690JBzJFfdE0nIqZGQ+NwrU3bRqkND94XWRE+eE+hkY6DnjNxr7DwyPnKyYMppVwHelMKI5s8GJZObVYbcXoDQOC0R5Z5ckL6BemmkE7I6Xna2jAVAl+YSgsoz6fyA6je71A2kqZmoYm5U1g7NfQQpkLZpClvC97tkIH7qeaf8xQNCN9hyMo0uYAFZ/pUJfzEjZDtWHqcYBIAdoKvE/IL7OcUZKqSGvKgmyvkvWeJqw4iw9p9nh8pDNc5nfQ==
+-----END UNIDOC LICENSE KEY-----`
+	companyName = "PaperCut Software International Pty Ltd"
 )
 
 var saveParams saveMarkedupParams
@@ -133,7 +140,7 @@ func extractColumnText(inPath, outPath string) error {
 
 	var pageTexts []string
 
-	for pageNum := 1; pageNum <= numPages; pageNum++ {
+	for pageNum := 1; pageNum <= 1; /*numPages*/ pageNum++ {
 		saveParams.curPage = pageNum
 		saveParams.markups[pageNum] = map[string][]model.PdfRectangle{}
 
@@ -308,8 +315,7 @@ func pageMarksToColumnText(textMarks *extractor.TextMarkArray, pageSize model.Pd
 	columnBBoxes = bigBBoxes
 
 	for i, bbox := range columnBBoxes {
-		common.Log.Info("%4d of %d: %5.1f %5.1f x %5.1f",
-			i+1, len(columnBBoxes), bbox, bbox.Width(), bbox.Height())
+		common.Log.Info("%4d of %d: %s", i+1, len(columnBBoxes), showBBox(bbox))
 	}
 
 	saveParams.markups[saveParams.curPage]["columns"] = columnBBoxes
@@ -378,7 +384,7 @@ func identifyLines(words []segmentationWord) [][]segmentationWord {
 	return lines
 }
 
-// identifyColumns returns the rectangles of the bounds of columns that `lines` are arranged within.
+// identifyColumns returns the rectangles of the bound of columns that `lines` are arranged within.
 func identifyColumns(lines [][]segmentationWord, pageSize model.PdfRectangle,
 	gapWidth float64) []model.PdfRectangle {
 	common.Log.Info("lines=%d", len(lines))
@@ -671,16 +677,8 @@ func lineGroupBBoxes(lines [][]segmentationWord) []model.PdfRectangle {
 }
 
 func lineBBox(line []segmentationWord) model.PdfRectangle {
-	var lineRect model.PdfRectangle
-	if len(line) == 0 {
-		return lineRect
-	}
 	bboxes := wordBBoxes(line)
-	lineRect = bboxes[0]
-	for _, bbox := range bboxes[1:] {
-		lineRect = rectUnion(lineRect, bbox)
-	}
-	return lineRect
+	return rectList(bboxes).union()
 }
 
 func wordBBoxes(words []segmentationWord) []model.PdfRectangle {
@@ -1498,7 +1496,7 @@ func whitespaceCover( /*words []segmentationWord*/ textMarks *extractor.TextMark
 		maxboxes,
 		maxoverlap, maxperim, fract, maxpops)
 
-	lh := newPriorityQueue()
+	pq := newPriorityQueue()
 	obstacles := make([]model.PdfRectangle, textMarks.Len())
 	for i, mark := range textMarks.Elements() {
 		obstacles[i] = mark.BBox
@@ -1525,15 +1523,15 @@ func whitespaceCover( /*words []segmentationWord*/ textMarks *extractor.TextMark
 	}
 
 	partel := newPartElt(pageSize, obstacles)
-	heap.Push(lh, partel)
+	heap.Push(pq, partel)
 
 	npop := 0
 	npush := 0
 	var cover []model.PdfRectangle
-	for cnt := 0; lh.Len() > 0; cnt++ {
-		partel := *(heap.Pop(lh).(*PartElt))
-		common.Log.Info("npush=%3d npop=%3d cover=%3d\n\tpartel=%s\n\t    lh=%s",
-			npush, npop, len(cover), partel.String(), lh.String())
+	for cnt := 0; pq.Len() > 0; cnt++ {
+		partel := *(heap.Pop(pq).(*PartElt))
+		common.Log.Info("npush=%3d npop=%3d cover=%3d\n\tpartel=%s\n\t    pq=%s",
+			npush, npop, len(cover), partel.String(), pq.String())
 
 		if cnt > 100000 {
 			panic("cnt")
@@ -1567,7 +1565,7 @@ func whitespaceCover( /*words []segmentationWord*/ textMarks *extractor.TextMark
 		for _, subbound := range subdivisions {
 			subobstacles := partel.obstacles.intersects(subbound)
 			partel := newPartElt(subbound, subobstacles)
-			heap.Push(lh, partel)
+			heap.Push(pq, partel)
 			npush++
 		}
 	}
@@ -1575,69 +1573,83 @@ func whitespaceCover( /*words []segmentationWord*/ textMarks *extractor.TextMark
 	return cover
 }
 
-// subdivide subdivides `bounds` into up to 4 rectangles.
-func subdivide(bounds model.PdfRectangle, obstacles rectList, maxperim, fract float64) rectList {
+// subdivide subdivides `bound` into up to 4 rectangles.
+func subdivide(bound model.PdfRectangle, obstacles rectList, maxperim, fract float64) rectList {
 	subdivisions := make(rectList, 0, 4)
-	pivot, err := selectPivot(bounds, obstacles, maxperim, fract)
+	pivot, err := selectPivot(bound, obstacles, maxperim, fract)
 	if err != nil {
 		panic(err)
 		return nil
 	}
+	var ok bool
+	pivot, ok = geometricIntersection(bound, pivot)
+	if !ok {
+		panic("no intersection")
+	}
 	var parts []string
-	if pivot.Llx > bounds.Llx && !same(bounds.Urx, pivot.Llx) { // left sub-bounds
-		quadrant := model.PdfRectangle{Llx: bounds.Llx, Lly: bounds.Lly, Urx: pivot.Llx, Ury: bounds.Ury}
+	if pivot.Llx > bound.Llx && !same(bound.Urx, pivot.Llx) { // left sub-bound
+		quadrant := model.PdfRectangle{Llx: bound.Llx, Lly: bound.Lly, Urx: pivot.Llx, Ury: bound.Ury}
 		subdivisions = append(subdivisions, quadrant)
 		parts = append(parts, "left")
+	} else {
+		u := obstacles.union()
+		if bound.Llx < u.Llx {
+			quadrant := model.PdfRectangle{Llx: bound.Llx, Lly: bound.Lly, Urx: u.Llx, Ury: bound.Ury}
+			subdivisions = append(subdivisions, quadrant)
+			parts = append(parts, "left*")
+		}
 	}
-	if pivot.Urx < bounds.Urx && !same(bounds.Llx, pivot.Urx) { // right sub-bounds
-		quadrant := model.PdfRectangle{Llx: pivot.Urx, Lly: bounds.Lly, Urx: bounds.Urx, Ury: bounds.Ury}
+	if pivot.Urx < bound.Urx && !same(bound.Llx, pivot.Urx) { // right sub-bound
+		quadrant := model.PdfRectangle{Llx: pivot.Urx, Lly: bound.Lly, Urx: bound.Urx, Ury: bound.Ury}
 		subdivisions = append(subdivisions, quadrant)
 		parts = append(parts, "right")
+	} else {
+		u := obstacles.union()
+		if bound.Urx > u.Urx {
+			quadrant := model.PdfRectangle{Llx: u.Urx, Lly: bound.Lly, Urx: bound.Urx, Ury: bound.Ury}
+			subdivisions = append(subdivisions, quadrant)
+			parts = append(parts, "right*")
+		}
 	}
-	if pivot.Ury < bounds.Ury && !same(bounds.Lly, pivot.Ury) { // top sub-bounds
-		quadrant := model.PdfRectangle{Llx: bounds.Llx, Lly: pivot.Ury, Urx: bounds.Urx, Ury: bounds.Ury}
+	if pivot.Ury < bound.Ury && !same(bound.Lly, pivot.Ury) { // top sub-bound
+		quadrant := model.PdfRectangle{Llx: bound.Llx, Lly: pivot.Ury, Urx: bound.Urx, Ury: bound.Ury}
 		subdivisions = append(subdivisions, quadrant)
 		parts = append(parts, "top")
 	}
-	if pivot.Lly > bounds.Lly && !same(bounds.Ury, pivot.Lly) { // bottom sub-bounds
-		quadrant := model.PdfRectangle{Llx: bounds.Llx, Lly: bounds.Lly, Urx: bounds.Urx, Ury: pivot.Lly}
+	if pivot.Lly > bound.Lly && !same(bound.Ury, pivot.Lly) { // bottom sub-bound
+		quadrant := model.PdfRectangle{Llx: bound.Llx, Lly: bound.Lly, Urx: bound.Urx, Ury: pivot.Lly}
 		subdivisions = append(subdivisions, quadrant)
 		parts = append(parts, "bottom")
 	}
 
-	common.Log.Debug("subdivide parts=%s\n\t bounds=%s\n\tboxp=%5.1f -->",
-		parts, showBox(bounds), pivot)
-	// for i, box := range subdivisions {
-	// 	fmt.Printf("\t %3d=%s\n", i, showBox(box))
-	// }
+	common.Log.Info("subdivide parts=%s\n\tbound=%s\n\tpivot=%5.1f -->",
+		parts, showBBox(bound), pivot)
+	for i, quadrant := range subdivisions {
+		fmt.Printf("\t%5d=%s\n", i, showBBox(quadrant))
+		if !validBBox(quadrant) {
+			panic("bbox")
+		}
+	}
 	return subdivisions
 }
 
-func same(x0, x1 float64) bool {
-	const TOL = 0.1
-	return math.Abs(x0-x1) < TOL
-}
-
-func showBox(box model.PdfRectangle) string {
-	w := box.Width()
-	h := box.Height()
-	return fmt.Sprintf("%5.1f %5.1f x %5.1f = %7.1f", box, w, h, w*h)
-}
-
-// selectPivot returns an element of `obstacles` close to the center of `bounds`.
-func selectPivot(bounds model.PdfRectangle, obstacles rectList, maxperim, fract float64) (
+// selectPivot returns an element of `obstacles` close to the center of `bound`.
+func selectPivot(bound model.PdfRectangle, obstacles rectList, maxperim, fract float64) (
 	model.PdfRectangle, error) {
+	if !validBBox(bound) {
+		panic(fmt.Errorf("selectPivot: bound=%s", showBBox(bound)))
+	}
 	if len(obstacles) == 0 {
 		return model.PdfRectangle{}, fmt.Errorf("no boxes in obstacles")
 	}
 	if fract < 0.0 || fract > 1.0 {
-		common.Log.Error("fract=%g out of bounds; using 0.0", fract)
+		common.Log.Error("fract=%g out of bound; using 0.0", fract)
 		fract = 0.0
 	}
 
-	w := bounds.Width()
-	h := bounds.Height()
-	x, y := bboxCenter(bounds)
+	w := bound.Width()
+	h := bound.Height()
+	x, y := bboxCenter(bound)
 	threshdist := fract * math.Sqrt(w*w+h*h)
 	mindist := 1000000000.0
 	minindex := 0
@@ -1686,11 +1698,18 @@ func selectPivot(bounds model.PdfRectangle, obstacles rectList, maxperim, fract 
 	return obstacles[minindex], nil
 }
 
+func priority(r model.PdfRectangle) float64 {
+	return r.Height() + 0.1*r.Width()
+}
+
 func newPartElt(bound model.PdfRectangle, obstacles []model.PdfRectangle) *PartElt {
+	if !validBBox(bound) {
+		panic(fmt.Errorf("bound=%s", showBBox(bound)))
+	}
 	return &PartElt{
 		bound:     bound,
 		obstacles: obstacles,
-		size:      bound.Height(),
+		size:      priority(bound),
 	}
 }
 
@@ -1702,14 +1721,17 @@ type PartElt struct {
 
 func (partel *PartElt) String() string {
 	extra := ""
-	if len(partel.obstacles) <= 5 {
-		parts := make([]string, len(partel.obstacles))
-		for i, box := range partel.obstacles {
-			parts[i] = fmt.Sprintf("\t%5.1f", box)
-		}
-		extra = "\n" + strings.Join(parts, "\n")
+	// if len(partel.obstacles) <= 5 {
+	// 	parts := make([]string, len(partel.obstacles))
+	// 	for i, box := range partel.obstacles {
+	// 		parts[i] = fmt.Sprintf("\t%5.1f", box)
+	// 	}
+	// 	extra = "\n" + strings.Join(parts, "\n")
+	// }
+	if len(partel.obstacles) == 0 {
+		extra = " LEAF!"
 	}
-	return fmt.Sprintf("<%.1f %d %5.1f%s>", partel.size, len(partel.obstacles), partel.bound, extra)
+	return fmt.Sprintf("<%d %s%s>", len(partel.obstacles), showBBox(partel.bound), extra)
 }
 
 // func (partel *PartElt) validate() {
@@ -1733,24 +1755,29 @@ type PriorityQueue []*PartElt
 
 func (pq *PriorityQueue) String() string {
 	parts := make([]string, 0, len(*pq))
+	var lines []string
 	var save PriorityQueue
 	for pq.Len() > 0 {
 		pe := heap.Pop(pq).(*PartElt)
 		save = append(save, pe)
 		leaf := " "
-		if len(pe.obstacles) == 0 {
+		if len(pe.obstacles) == 0 && len(lines) < 5 {
 			leaf = " LEAF!"
+			lines = append(lines, fmt.Sprintf("\n\t%5.1f %5.1f", pe.size, pe.bound))
 		}
 		if len(parts) >= 5 && leaf != " LEAF!" {
 			continue
 		}
 		parts = append(parts, fmt.Sprintf("%.1f %d%s", pe.size, len(pe.obstacles), leaf))
-
 	}
 	for _, pe := range save {
 		heap.Push(pq, pe)
 	}
-	return fmt.Sprintf("{PQ %d: %s}", len(*pq), strings.Join(parts, ", "))
+	extra := ""
+	if len(lines) > 0 {
+		extra = strings.Join(lines, "")
+	}
+	return fmt.Sprintf("{PQ %d: %s%s}", len(*pq), strings.Join(parts, ", "), extra)
 }
 
 func (pq PriorityQueue) Len() int { return len(pq) }
@@ -1774,6 +1801,18 @@ func (pq *PriorityQueue) Pop() interface{} {
 }
 
 type rectList []model.PdfRectangle
+
+func (rl rectList) union() model.PdfRectangle {
+	var u model.PdfRectangle
+	if len(rl) == 0 {
+		return u
+	}
+	u = rl[0]
+	for _, r := range rl[1:] {
+		u = rectUnion(u, r)
+	}
+	return u
+}
 
 // intersects returns the elements of `rl` that interset `box`.
 func (rl rectList) intersects(box model.PdfRectangle) rectList {
@@ -1873,5 +1912,16 @@ func intersects(r0, r1 model.PdfRectangle) bool {
 }
 
 func validBBox(r model.PdfRectangle) bool {
-	return r.Height() > 0 && r.Width() > 0
+	return r.Llx < r.Urx && r.Lly < r.Ury
+}
+
+func showBBox(r model.PdfRectangle) string {
+	w := r.Urx - r.Llx
+	h := r.Ury - r.Lly
+	return fmt.Sprintf("%5.1f %5.1fx%5.1f=%5.1f", r, w, h, priority(r))
+}
+
+func same(x0, x1 float64) bool {
+	const TOL = 0.1
+	return math.Abs(x0-x1) < TOL
 }
