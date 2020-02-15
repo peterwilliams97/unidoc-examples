@@ -10,6 +10,7 @@
  *
  * References
  * https://www.dfki.de/fileadmin/user_upload/import/2000_HighPerfDocLayoutAna.pdf
+ * https://www.researchgate.net/publication/265186943_Layout_Analysis_based_on_Text_Line_Segment_Hypotheses
  */
 
 package main
@@ -51,7 +52,7 @@ const (
 	// key and the UNIPDF_CUSTOMER_NAME the explicitly specified customer name to which the key is
 	// licensed.
 	uniDocLicenseKey = ``
-	companyName = ""
+	companyName      = ""
 )
 
 var saveParams saveMarkedupParams
@@ -137,6 +138,9 @@ func extractColumnText(inPath, outPath string) error {
 	var pageTexts []string
 
 	for pageNum := 1; pageNum <= numPages; pageNum++ {
+		if pageNum != 5 {
+			continue
+		}
 		saveParams.curPage = pageNum
 		saveParams.markups[pageNum] = map[string][]model.PdfRectangle{}
 
@@ -181,9 +185,17 @@ func extractColumnText(inPath, outPath string) error {
 
 		}
 		text := pageText.Text()
+		words := pageText.Words()
 		textMarks := pageText.Marks()
 		common.Log.Info("-------------------------------------------------------")
 		common.Log.Info("pageNum=%d text=%d textMarks=%d", pageNum, len(text), textMarks.Len())
+
+		// common.Log.Info("%d words", len(words))
+		// for i, w := range words {
+		// 	b, _ := w.BBox()
+		// 	fmt.Printf("%4d: %s %q\n", i, showBBox(b), w.Text())
+		// }
+		// panic("done")
 
 		group := make(rectList, textMarks.Len())
 		for i, mark := range textMarks.Elements() {
@@ -220,6 +232,7 @@ func extractColumnText(inPath, outPath string) error {
 // grouping the marks into words, lines and columns and then merging the column texts.
 func pageMarksToColumnText(textMarks *extractor.TextMarkArray, pageSize model.PdfRectangle) (
 	string, error) {
+
 	// STEP - Form words.
 	// Group the closest text marks that are overlapping.
 	var words []segmentationWord
@@ -240,7 +253,7 @@ func pageMarksToColumnText(textMarks *extractor.TextMarkArray, pageSize model.Pd
 		}
 		common.Log.Trace(" - areaOverlap: %f", areaOverlap(mark.BBox, lastMark.BBox))
 		overlap := areaOverlap(mark.BBox, lastMark.BBox)
-		if overlap > 0.1 {
+		if overlap > 0.8 {
 			if len(strings.TrimSpace(word.String())) > 0 {
 				common.Log.Trace("Appending word: '%s' (%d chars) (%d elements)", word.String(),
 					len(word.String()), len(word.Elements()))
@@ -681,6 +694,32 @@ func wordBBoxes(words []segmentationWord) []model.PdfRectangle {
 		bboxes = append(bboxes, b)
 	}
 	return bboxes
+}
+
+func wordBBoxMap(words []segmentationWord) map[float64]segmentationWord {
+	sigWord := make(map[float64]segmentationWord, len(words))
+	for _, w := range words {
+		b, ok := w.BBox()
+		if !ok {
+			panic("bbox")
+		}
+		sig := partEltSig(b)
+		sigWord[sig] = w
+	}
+	return sigWord
+}
+
+func bboxWords(sigWord map[float64]segmentationWord, bboxes []model.PdfRectangle) []segmentationWord {
+	words := make([]segmentationWord, len(bboxes))
+	for i, b := range bboxes {
+		sig := partEltSig(b)
+		w, ok := sigWord[sig]
+		if !ok {
+			panic("signature")
+		}
+		words[i] = w
+	}
+	return words
 }
 
 func mergeXBboxes(bboxes []model.PdfRectangle) []model.PdfRectangle {
@@ -1477,9 +1516,12 @@ func whitespaceCover(pageSize model.PdfRectangle,
 	// }
 	// obstacles = obstacles[:]
 	obstacles := wordBBoxes(words)
+	sigObstacles = wordBBoxMap(words)
 	return obstacleCover(pageSize, obstacles, maxboxes, maxoverlap, maxperim, frac, maxpops)
 
 }
+
+var sigObstacles map[float64]segmentationWord
 
 // obstacleCover returns a best-effort maximum rectangle cover of the part of `bound` that
 // excludes  `obstacles`.
@@ -1492,6 +1534,16 @@ func obstacleCover(bound model.PdfRectangle, obstacles rectList,
 		"\tmaxoverlap=%g maxperim=%g frac=%g maxpops=%d",
 		bound, len(obstacles), maxboxes,
 		maxoverlap, maxperim, frac, maxpops)
+
+	{
+		envelope := obstacles.union()
+		contraction, _ := geometricIntersection(bound, envelope)
+		contraction.Llx += 100
+		contraction.Urx -= 100
+		common.Log.Info("contraction\n\t   bound=%s\n\tenvelope=%s\n\tcontract=%s",
+			showBBox(bound), showBBox(envelope), showBBox(contraction))
+		bound = contraction
+	}
 
 	pq := newPriorityQueue()
 	partel := newPartElt(bound, obstacles)
@@ -1533,7 +1585,7 @@ func obstacleCover(bound model.PdfRectangle, obstacles rectList,
 		for _, subbound := range subdivisions {
 			subobstacles := partel.obstacles.intersects(subbound)
 			partel := newPartElt(subbound, subobstacles)
-			if math.Max(partel.bound.Height(), partel.bound.Width()) < 40.0 {
+			if !accept(partel.bound) {
 				continue
 			}
 			pq.myPush(partel)
@@ -1548,7 +1600,26 @@ func obstacleCover(bound model.PdfRectangle, obstacles rectList,
 	return cover
 }
 
-// subdivide subdivides `bound` into up to 4 rectangles.
+func accept(bound model.PdfRectangle) bool {
+	// return math.Max(bound.Height(), bound.Width()) > 40.0
+	if bound.Height() > 40.0 && bound.Width() > 5.0 {
+		return true
+	}
+	// if bound.Height() > 5.0 && bound.Width() > 40.0 {
+	// 	return true
+	// }
+	return false
+}
+
+func partEltQuality(r model.PdfRectangle) float64 {
+	return r.Height() + 0.1*r.Width()
+}
+
+func partEltSig(r model.PdfRectangle) float64 {
+	return r.Llx + r.Urx*1e3 + r.Lly*1e6 + r.Ury*1e9
+}
+
+// subdivide subdivides `bound` into up to 4 rectangles that don't intersect with `obstacles`.
 func subdivide(bound model.PdfRectangle, obstacles rectList, maxperim, frac float64) rectList {
 	subdivisions := make(rectList, 0, 4)
 	pivot, err := selectPivot(bound, obstacles, maxperim, frac)
@@ -1670,14 +1741,6 @@ func selectPivot(bound model.PdfRectangle, obstacles rectList, maxperim, frac fl
 	return obstacles[minindex], nil
 }
 
-func partEltQuality(r model.PdfRectangle) float64 {
-	return r.Height() + 0.1*r.Width()
-}
-
-func partEltSig(r model.PdfRectangle) float64 {
-	return r.Llx + r.Urx*1e3 + r.Lly*1e6 + r.Ury*1e9
-}
-
 func newPartElt(bound model.PdfRectangle, obstacles rectList) *partElt {
 	if !validBBox(bound) {
 		panic(fmt.Errorf("bound=%s", showBBox(bound)))
@@ -1711,12 +1774,24 @@ func (partel *partElt) extend(bound model.PdfRectangle, obstacles rectList) *par
 	obs := obstacles.intersects(bnd)
 	if len(obs) > 0 {
 		bnd.Ury = obs.union().Lly
+		words := bboxWords(sigObstacles, obs)
+		common.Log.Info("Upward extention %d", len(words))
+		for i, w := range words {
+			b, _ := w.BBox()
+			fmt.Printf("%4d: %5.1f %s\n", i, b, w)
+		}
 	}
 
 	bnd.Lly = bound.Lly
 	obs = obstacles.intersects(bnd)
 	if len(obs) > 0 {
 		bnd.Lly = obs.union().Ury
+		words := bboxWords(sigObstacles, obs)
+		common.Log.Info("Downward extention %d", len(words))
+		for i, w := range words {
+			b, _ := w.BBox()
+			fmt.Printf("%4d: %5.1f %s\n", i, b, w)
+		}
 	}
 
 	bnd.Urx = bound.Urx
