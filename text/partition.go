@@ -52,7 +52,7 @@ const (
 	// key and the UNIPDF_CUSTOMER_NAME the explicitly specified customer name to which the key is
 	// licensed.
 	uniDocLicenseKey = ``
-	companyName      = ""
+	companyName = ""
 )
 
 var saveParams saveMarkedupParams
@@ -62,10 +62,14 @@ func main() {
 		loglevel   string
 		saveMarkup string
 		markupPath string
+		firstPage  int
+		lastPage   int
 	)
-	flag.StringVar(&loglevel, "l", "info", "Set log level (default: info)")
+	flag.StringVar(&loglevel, "L", "info", "Set log level (default: info)")
 	flag.StringVar(&saveMarkup, "m", "columns", "Save markup (none/marks/words/lines/columns/all)")
 	flag.StringVar(&markupPath, "mf", "./layout.pdf", "Output markup path (default /tmp/markup.pdf)")
+	flag.IntVar(&firstPage, "f", -1, "First page")
+	flag.IntVar(&lastPage, "l", 100000, "Last page")
 	makeUsage(usage)
 	flag.Parse()
 	args := flag.Args()
@@ -105,7 +109,7 @@ func main() {
 
 	inPath := args[0]
 	outPath := args[1]
-	err := extractColumnText(inPath, outPath)
+	err := extractColumnText(inPath, outPath, firstPage, lastPage)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %r\n", err)
 		os.Exit(1)
@@ -116,7 +120,7 @@ func main() {
 
 // extractColumnText extracts text columns from PDF file `inPath` and outputs the data as a text
 // file to `outPath`.
-func extractColumnText(inPath, outPath string) error {
+func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 	f, err := os.Open(inPath)
 	if err != nil {
 		return fmt.Errorf("Could not open %q err=%w", inPath, err)
@@ -133,16 +137,20 @@ func extractColumnText(inPath, outPath string) error {
 	}
 
 	saveParams.pdfReader = pdfReader
-	saveParams.markups = map[int]map[string][]model.PdfRectangle{}
+	saveParams.markups = map[int]map[string]rectList{}
 
 	var pageTexts []string
 
-	for pageNum := 1; pageNum <= numPages; pageNum++ {
-		if pageNum != 5 {
-			continue
-		}
+	if firstPage < 1 {
+		firstPage = 1
+	}
+	if lastPage > numPages {
+		lastPage = numPages
+	}
+
+	for pageNum := firstPage; pageNum <= lastPage; pageNum++ {
 		saveParams.curPage = pageNum
-		saveParams.markups[pageNum] = map[string][]model.PdfRectangle{}
+		saveParams.markups[pageNum] = map[string]rectList{}
 
 		page, err := pdfReader.GetPage(pageNum)
 		if err != nil {
@@ -190,12 +198,15 @@ func extractColumnText(inPath, outPath string) error {
 		common.Log.Info("-------------------------------------------------------")
 		common.Log.Info("pageNum=%d text=%d textMarks=%d", pageNum, len(text), textMarks.Len())
 
-		// common.Log.Info("%d words", len(words))
+		common.Log.Info("%d words", len(words))
 		// for i, w := range words {
 		// 	b, _ := w.BBox()
 		// 	fmt.Printf("%4d: %s %q\n", i, showBBox(b), w.Text())
+		// 	for j, m := range w.Elements() {
+		// 		b := m.BBox
+		// 		fmt.Printf("%8d: %s %q\n", j, showBBox(b), m.Text)
+		// 	}
 		// }
-		// panic("done")
 
 		group := make(rectList, textMarks.Len())
 		for i, mark := range textMarks.Elements() {
@@ -203,7 +214,7 @@ func extractColumnText(inPath, outPath string) error {
 		}
 		saveParams.markups[pageNum]["marks"] = group
 
-		outPageText, err := pageMarksToColumnText(textMarks, *mbox)
+		outPageText, err := pageMarksToColumnText(pageNum, words, *mbox)
 		if err != nil {
 			common.Log.Debug("Error grouping text: %r", err)
 			return err
@@ -230,49 +241,12 @@ func extractColumnText(inPath, outPath string) error {
 
 // pageMarksToColumnText converts `textMarks`, the text marks from a single page, into a string by
 // grouping the marks into words, lines and columns and then merging the column texts.
-func pageMarksToColumnText(textMarks *extractor.TextMarkArray, pageSize model.PdfRectangle) (
+func pageMarksToColumnText(pageNum int, words []extractor.TextMarkArray, pageSize model.PdfRectangle) (
 	string, error) {
-
-	// STEP - Form words.
-	// Group the closest text marks that are overlapping.
-	var words []segmentationWord
-	word := segmentationWord{ma: &extractor.TextMarkArray{}}
-	var lastMark extractor.TextMark
-	isFirst := true
-	for i, mark := range textMarks.Elements() {
-		if mark.Text == "" {
-			continue
-		}
-		common.Log.Trace("Mark %d - '%s' (% X)", i, mark.Text, mark.Text)
-		if isFirst {
-			word = segmentationWord{ma: &extractor.TextMarkArray{}}
-			word.ma.Append(mark)
-			lastMark = mark
-			isFirst = false
-			continue
-		}
-		common.Log.Trace(" - areaOverlap: %f", areaOverlap(mark.BBox, lastMark.BBox))
-		overlap := areaOverlap(mark.BBox, lastMark.BBox)
-		if overlap > 0.8 {
-			if len(strings.TrimSpace(word.String())) > 0 {
-				common.Log.Trace("Appending word: '%s' (%d chars) (%d elements)", word.String(),
-					len(word.String()), len(word.Elements()))
-				words = append(words, word)
-			}
-			word = segmentationWord{ma: &extractor.TextMarkArray{}}
-		}
-		word.ma.Append(mark)
-		lastMark = mark
-	}
-	if len(strings.TrimSpace(word.String())) > 0 {
-		common.Log.Info("Appending word: '%s' (%d chars) (%d elements)", word.String(),
-			len(word.String()), len(word.Elements()))
-		words = append(words, word)
-	}
 
 	// Include the words in the markup.
 	{
-		var wbboxes []model.PdfRectangle
+		var wbboxes rectList
 		for _, word := range words {
 			wbbox, ok := word.BBox()
 			if !ok {
@@ -283,31 +257,15 @@ func pageMarksToColumnText(textMarks *extractor.TextMarkArray, pageSize model.Pd
 		saveParams.markups[saveParams.curPage]["words"] = wbboxes
 	}
 
-	lines := identifyLines(words)
-	common.Log.Info("lines=\n%s", stringFromBlock(lines))
-	common.Log.Info("lines=%d", len(lines))
-	common.Log.Info("=============================================")
+	// gapSize := charMultiplier * averageWidth(textMarks)
+	// common.Log.Info("gapSize=%.1f = %1.f mm charMultiplier=%.1f averageWidth(textMarks)=%.1f",
+	// 	gapSize, gapSize/72.0*25.4, charMultiplier, averageWidth(textMarks))
 
-	tableLines := lines
-
-	var tableWords []segmentationWord
-	for _, line := range tableLines {
-		tableWords = append(tableWords, line...)
-	}
-	// for _, ma := range textMarks.Elements() {
-	// 	tableWords = append(tableWords, segmentationWord{ma: ma})
-	// }
-
-	gapSize := charMultiplier * averageWidth(textMarks)
-	common.Log.Info("gapSize=%.1f = %1.f mm charMultiplier=%.1f averageWidth(textMarks)=%.1f",
-		gapSize, gapSize/72.0*25.4, charMultiplier, averageWidth(textMarks))
-
-	// columnBBoxes := identifyColumns(tableLines, pageSize, gapSize)
-
-	columnBBoxes := whitespaceCover(pageSize, tableWords /*textMarks*/)
+	pageBound, columnBBoxes := whitespaceCover(pageSize, words)
+	saveParams.markups[pageNum]["page"] = rectList{pageBound}
 
 	common.Log.Info("%d columns~~~~~~~~~~~~~~~~~~~ ", len(columnBBoxes))
-	var bigBBoxes []model.PdfRectangle
+	var bigBBoxes rectList
 	for _, bbox := range columnBBoxes {
 		if bbox.Height() < 20 {
 			continue
@@ -323,172 +281,9 @@ func pageMarksToColumnText(textMarks *extractor.TextMarkArray, pageSize model.Pd
 
 	saveParams.markups[saveParams.curPage]["columns"] = columnBBoxes
 
-	columnText := getColumnText(lines, columnBBoxes)
-	// for i, bbox := range columnBBoxes {
-	// 	common.Log.Info("%4d of %d: %5.1f %d chars^^^^^^^^^^^^^^^^^^", i+1, len(columnBBoxes), bbox,
-	// 		len(columnText[i]))
-	// 	common.Log.Info("%s", columnText)
-	// }
-
-	return strings.Join(columnText, "\n####\n"), nil
-}
-
-// identifyLines returns `words` segmented into horizontal lines (words with roughly same y position).
-func identifyLines(words []segmentationWord) [][]segmentationWord {
-	var lines [][]segmentationWord
-
-	for k, word := range words {
-		wbbox, ok := word.BBox()
-		if !ok {
-			panic("BBox")
-			continue
-		}
-
-		match := false
-		for i, line := range lines {
-			firstWord := line[0]
-			firstBBox, ok := firstWord.BBox()
-			if !ok {
-				continue
-			}
-
-			overlap := lineOverlap(wbbox, firstBBox)
-			common.Log.Debug("overlap: %+.2f word=%d line=%d \n\t%5.1f '%s'\n\t%5.1f '%s'",
-				overlap, k, i, firstBBox, firstWord.String(), wbbox, word.String())
-			if overlap < 0 {
-				lines[i] = append(lines[i], word)
-				match = true
-				break
-			}
-		}
-		if !match {
-			lines = append(lines, []segmentationWord{word})
-		}
-	}
-
-	// Sort lines by base height of first word in line, top to bottom.
-	sort.SliceStable(lines, func(i, j int) bool {
-		bboxi, _ := lines[i][0].BBox()
-		bboxj, _ := lines[j][0].BBox()
-		return bboxi.Lly >= bboxj.Lly
-	})
-	// Sort contents of each line by x position, left to right.
-	for li := range lines {
-		sort.SliceStable(lines[li], func(i, j int) bool {
-			bboxi, _ := lines[li][i].BBox()
-			bboxj, _ := lines[li][j].BBox()
-			return bboxi.Llx < bboxj.Llx
-		})
-	}
-
-	// Save the line bounding boxes for markup output.
-	lineGroups := lineGroupBBoxes(lines)
-	saveParams.markups[saveParams.curPage]["lines"] = lineGroups
-	return lines
-}
-
-// identifyColumns returns the rectangles of the bound of columns that `lines` are arranged within.
-func identifyColumns(lines [][]segmentationWord, pageSize model.PdfRectangle,
-	gapWidth float64) []model.PdfRectangle {
-	common.Log.Info("lines=%d", len(lines))
-	var pageDivs []division
-	for _, line := range lines {
-		div := calcLineGaps(line, pageSize.Width(), gapWidth)
-		if len(div.gaps) == 0 {
-			continue
-		}
-		pageDivs = append(pageDivs, div)
-	}
-	common.Log.Info("pageDivs=%d", len(pageDivs))
-	for i, div := range pageDivs {
-		marker := fmt.Sprintf("@@%d", len(div.gaps))
-		if len(div.gaps) == 2 {
-			// continue
-			marker = "  "
-		}
-		fmt.Printf("\t\t%s %4d: %s\n", marker, i, div)
-	}
-	saveParams.markups[saveParams.curPage]["divs"] = pageDivsToRects(pageDivs)
-
-	pageGaps := coallesceGaps(pageDivs, gapWidth, gapHeight)
-	common.Log.Info("pageGaps=%d", len(pageGaps))
-
-	// Include the gaps in the markup.
-	saveParams.markups[saveParams.curPage]["gaps"] = pageGaps
-
-	// Sort columns by left of first word in line, left to right.
-	sort.SliceStable(pageGaps, func(i, j int) bool {
-		ri, rj := pageGaps[i], pageGaps[j]
-		if ri.Ury != rj.Ury {
-			return ri.Ury >= rj.Ury
-		}
-		return ri.Llx < rj.Llx
-	})
-
-	columns := scanPage(pageGaps, pageSize)
-	saveParams.markups[saveParams.curPage]["columns"] = columns
-	return columns
-}
-
-// calcLineGaps returns the gaps in `line`.
-func calcLineGaps(line []segmentationWord, pageWidth, gapWidth float64) division {
-	bboxes := wordBBoxes(line)
-	if len(bboxes) == 0 {
-		return division{}
-	}
-	common.Log.Info("bboxes<0>= %d %.1f", len(bboxes), bboxes)
-	bboxes = mergeXBboxes(bboxes)
-	common.Log.Info("bboxes<1>= %d %.1f", len(bboxes), bboxes)
-
-	y0 := bboxes[0].Lly
-	y1 := bboxes[0].Ury
-	gap := model.PdfRectangle{Llx: 0.0, Urx: bboxes[0].Llx, Lly: y0, Ury: y1}
-	gaps := []model.PdfRectangle{gap}
-
-	widest := -100.0
-
-	for i := 1; i < len(bboxes); i++ {
-		if bboxes[i].Lly < y0 {
-			y0 = bboxes[i].Lly
-		}
-		if bboxes[i].Ury > y0 {
-			y1 = bboxes[i].Ury
-		}
-		x0 := bboxes[i-1].Urx
-		x1 := bboxes[i].Llx
-		if x1-x0 >= gapWidth {
-			gap := model.PdfRectangle{Llx: x0, Urx: x1, Lly: y0, Ury: y1}
-			gaps = append(gaps, gap)
-		}
-		common.Log.Info("%3d: x0=%.1f x1=%.f", i, x0, x1)
-		if x1-x0 >= widest {
-			widest = x1 - x0
-		}
-	}
-	gap = model.PdfRectangle{
-		Llx: bboxes[len(bboxes)-1].Urx,
-		Urx: pageWidth,
-		Lly: y0,
-		Ury: y1,
-	}
-	gaps = append(gaps, gap)
-
-	if len(bboxes) >= 2 {
-		common.Log.Info("widest=%.1f", widest)
-		if widest < 0.0 {
-			panic("widest")
-		}
-	}
-
-	div := division{
-		gaps:   gaps,
-		text:   textFromLine(line),
-		widest: widest,
-	}
-
-	common.Log.Info("bboxes=%.1f -> div=%s", bboxes, div)
-
-	return div
+	// columnText := getColumnText(lines, columnBBoxes)
+	// return strings.Join(columnText, "\n####\n"), nil
+	return "FIX ME", nil
 }
 
 // coallesceGaps merges matching gaps in successive lines of pageGaps. A match is a gap width and
@@ -509,8 +304,8 @@ func calcLineGaps(line []segmentationWord, pageWidth, gapWidth float64) division
 //  - gap 1 is closed
 //  - gap 2 is continued
 //  - gap 3 is opened
-func coallesceGaps(pageGaps []division, gapWidth float64, gapHeight int) []model.PdfRectangle {
-	var gaps []model.PdfRectangle
+func coallesceGaps(pageGaps []division, gapWidth float64, gapHeight int) rectList {
+	var gaps rectList
 	div0 := pageGaps[0]
 	div := div0
 	for _, div1 := range pageGaps[1:] {
@@ -556,7 +351,7 @@ func coallesceGaps(pageGaps []division, gapWidth float64, gapHeight int) []model
 		fmt.Printf("%4d: %5.1f\n", i, g)
 	}
 
-	var bigGaps []model.PdfRectangle
+	var bigGaps rectList
 	for _, g := range gaps {
 		if g.Height() < 72.0 {
 			continue
@@ -568,7 +363,7 @@ func coallesceGaps(pageGaps []division, gapWidth float64, gapHeight int) []model
 		fmt.Printf("%4d: %5.1f\n", i, g)
 	}
 
-	simpleGaps := []model.PdfRectangle{bigGaps[0]}
+	simpleGaps := rectList{bigGaps[0]}
 	for i := 1; i < len(bigGaps); i++ {
 		g := bigGaps[i]
 		small := false
@@ -635,14 +430,14 @@ func overlappingGaps(div0, div1 division, gapWidth float64) (closed, continued, 
 
 func testOverlappingGaps() {
 	div0 := division{
-		gaps: []model.PdfRectangle{
+		gaps: rectList{
 			model.PdfRectangle{Lly: 10, Ury: 20, Llx: 50, Urx: 60},
 			model.PdfRectangle{Lly: 10, Ury: 20, Llx: 70, Urx: 96},
 			model.PdfRectangle{Lly: 10, Ury: 20, Llx: 200, Urx: 215},
 		},
 	}
 	div1 := division{
-		gaps: []model.PdfRectangle{
+		gaps: rectList{
 			model.PdfRectangle{Lly: 20, Ury: 30, Llx: 0, Urx: 5},
 			model.PdfRectangle{Lly: 20, Ury: 30, Llx: 40, Urx: 55},
 			model.PdfRectangle{Lly: 20, Ury: 30, Llx: 58, Urx: 76},
@@ -671,33 +466,25 @@ func averageWidth(textMarks *extractor.TextMarkArray) float64 {
 const gapHeight = 5
 const charMultiplier = 1.0
 
-func lineGroupBBoxes(lines [][]segmentationWord) []model.PdfRectangle {
-	lineGroup := make([]model.PdfRectangle, len(lines))
-	for i, line := range lines {
-		lineGroup[i] = lineBBox(line)
-	}
-	return lineGroup
-}
-
-func lineBBox(line []segmentationWord) model.PdfRectangle {
+func lineBBox(line []extractor.TextMarkArray) model.PdfRectangle {
 	bboxes := wordBBoxes(line)
 	return rectList(bboxes).union()
 }
 
-func wordBBoxes(words []segmentationWord) []model.PdfRectangle {
-	bboxes := make([]model.PdfRectangle, 0, len(words))
+func wordBBoxes(words []extractor.TextMarkArray) rectList {
+	bboxes := make(rectList, 0, len(words))
 	for _, w := range words {
 		b, ok := w.BBox()
 		if !ok {
-			continue
+			panic("bbox")
 		}
 		bboxes = append(bboxes, b)
 	}
 	return bboxes
 }
 
-func wordBBoxMap(words []segmentationWord) map[float64]segmentationWord {
-	sigWord := make(map[float64]segmentationWord, len(words))
+func wordBBoxMap(words []extractor.TextMarkArray) map[float64]extractor.TextMarkArray {
+	sigWord := make(map[float64]extractor.TextMarkArray, len(words))
 	for _, w := range words {
 		b, ok := w.BBox()
 		if !ok {
@@ -709,8 +496,8 @@ func wordBBoxMap(words []segmentationWord) map[float64]segmentationWord {
 	return sigWord
 }
 
-func bboxWords(sigWord map[float64]segmentationWord, bboxes []model.PdfRectangle) []segmentationWord {
-	words := make([]segmentationWord, len(bboxes))
+func bboxWords(sigWord map[float64]extractor.TextMarkArray,bboxes rectList) []extractor.TextMarkArray {
+	words := make([]extractor.TextMarkArray, len(bboxes))
 	for i, b := range bboxes {
 		sig := partEltSig(b)
 		w, ok := sigWord[sig]
@@ -722,8 +509,8 @@ func bboxWords(sigWord map[float64]segmentationWord, bboxes []model.PdfRectangle
 	return words
 }
 
-func mergeXBboxes(bboxes []model.PdfRectangle) []model.PdfRectangle {
-	merged := make([]model.PdfRectangle, 0, len(bboxes))
+func mergeXBboxes(bboxes rectList) rectList {
+	merged := make(rectList, 0, len(bboxes))
 	merged = append(merged, bboxes[0])
 	for _, b := range bboxes[1:] {
 		numOverlaps := 0
@@ -823,7 +610,7 @@ func (idr idRect) validate() {
 	}
 }
 
-func scanPage(pageGaps []model.PdfRectangle, pageSize model.PdfRectangle) []model.PdfRectangle {
+func scanPage(pageGaps rectList, pageSize model.PdfRectangle) rectList {
 	ss := newScanState(pageSize)
 	slines := ss.gapsToScanLines(pageGaps)
 	common.Log.Info("scanPage %s", ss)
@@ -849,7 +636,7 @@ func scanPage(pageGaps []model.PdfRectangle, pageSize model.PdfRectangle) []mode
 	for i, c := range ss.completed {
 		fmt.Printf("%4d: %s\n", i, c)
 	}
-	columns := make([]model.PdfRectangle, len(ss.completed))
+	columns := make(rectList, len(ss.completed))
 	for i, c := range ss.completed {
 		columns[i] = c.PdfRectangle
 	}
@@ -1030,7 +817,7 @@ func (ss *scanState) popIntersect(gaps []idRect) []idRect {
 	return columns1
 }
 
-func (ss *scanState) gapsToScanLines(pageGaps []model.PdfRectangle) []scanLine {
+func (ss *scanState) gapsToScanLines(pageGaps rectList) []scanLine {
 	events := make([]scanEvent, 2*len(pageGaps))
 	for i, gap := range pageGaps {
 		idr := ss.newIDRect(gap)
@@ -1065,7 +852,7 @@ func (ss *scanState) gapsToScanLines(pageGaps []model.PdfRectangle) []scanLine {
 }
 
 func (sl scanLine) columnsScan(pageSize model.PdfRectangle, enter bool) (
-	opened, closed []model.PdfRectangle) {
+	opened, closed rectList) {
 
 	addCol := func(x0, x1 float64) {
 		if x1 > x0 {
@@ -1134,12 +921,12 @@ func (e scanEvent) y() float64 {
 // !@#$ Rename to layout
 type division struct {
 	widest float64
-	gaps   []model.PdfRectangle
+	gaps   rectList
 	text   string
 }
 
-func pageDivsToRects(divs []division) []model.PdfRectangle {
-	var rects []model.PdfRectangle
+func pageDivsToRects(divs []division) rectList {
+	var rects rectList
 	for _, div := range divs {
 		rects = append(rects, div.gaps...)
 	}
@@ -1246,7 +1033,7 @@ func bboxHeight(bbox model.PdfRectangle) float64 {
 
 // getColumnText converts `lines` (lines of words) into table string cells by accounting for
 // distribution of lines into columns as specified by `columnBBoxes`.
-func getColumnText(lines [][]segmentationWord, columnBBoxes []model.PdfRectangle) []string {
+func getColumnText(lines [][]segmentationWord, columnBBoxes rectList) []string {
 	if len(columnBBoxes) == 0 {
 		return nil
 	}
@@ -1311,7 +1098,7 @@ func (w segmentationWord) String() string {
 
 type saveMarkedupParams struct {
 	pdfReader        *model.PdfReader
-	markups          map[int]map[string][]model.PdfRectangle
+	markups          map[int]map[string]rectList
 	curPage          int
 	shownMarkups     map[string]struct{}
 	markupOutputPath string
@@ -1347,6 +1134,8 @@ func saveMarkedupPDF(params saveMarkedupParams) error {
 		}
 		h := mediaBox.Ury
 
+		params.shownMarkups["page"] = struct{}{}
+
 		if err := c.AddPage(page); err != nil {
 			return fmt.Errorf("AddPage failed err=%w", err)
 		}
@@ -1367,13 +1156,17 @@ func saveMarkedupPDF(params saveMarkedupParams) error {
 			for i, r := range group {
 				common.Log.Debug("Mark %d: %5.1f x,y,w,h=%5.1f %5.1f %5.1f %5.1f", i+1, r,
 					r.Llx, h-r.Lly, r.Urx-r.Llx, -(r.Ury - r.Lly))
-				dx := 5.0
-				dy := 5.0
-				if r.Urx-r.Llx < 4.0*dx {
-					dx = (r.Urx - r.Llx) / 4.0
+				dx := 0.5
+				dy := 0.5
+				if r.Urx-r.Llx < 20.0*dx {
+					dx = (r.Urx - r.Llx) / 20.0
 				}
-				if r.Ury-r.Lly < 4.0*dy {
-					dy = (r.Ury - r.Lly) / 4.0
+				if r.Ury-r.Lly < 20.0*dy {
+					dy = (r.Ury - r.Lly) / 20.0
+				}
+				if markupType == "marks" {
+					dx = 0.0
+					dy = 0.0
 				}
 				llx := r.Llx + dx
 				urx := r.Urx - dx
@@ -1409,12 +1202,13 @@ func saveMarkedupPDF(params saveMarkedupParams) error {
 
 var (
 	widths = map[string]float64{
-		"marks":   0.4,
-		"words":   0.3,
+		"marks":   0.05,
+		"words":   0.1,
 		"lines":   0.2,
 		"divs":    0.6,
 		"gaps":    0.9,
 		"columns": 1.0,
+		"page":    1.1,
 	}
 	colors = map[string]string{
 		"marks":   "#0000ff",
@@ -1423,6 +1217,7 @@ var (
 		"divs":    "#ffff00",
 		"gaps":    "#0000ff",
 		"columns": "#f0f000",
+		"page":    "#00aabb",
 	}
 	bkgnds = map[string]string{
 		"marks":   "#ffff00",
@@ -1431,10 +1226,11 @@ var (
 		"divs":    "#0000ff",
 		"gaps":    "#ffff00",
 		"columns": "#000077",
+		"page":    "#ff0000",
 	}
 )
 
-func markupKeys(markups map[string][]model.PdfRectangle) []string {
+func markupKeys(markups map[string]rectList) []string {
 	var keys []string
 	for markupType := range markups {
 		keys = append(keys, markupType)
@@ -1447,6 +1243,7 @@ func markupKeys(markups map[string][]model.PdfRectangle) []string {
 		}
 		return ki < kj
 	})
+	common.Log.Info("keys=%q", keys)
 	return keys
 }
 
@@ -1499,29 +1296,30 @@ func changePath(filename, insertion, ext string) string {
 
 // whitespaceCover returns a best-effort maximum rectangle cover of the part of `pageSize` that
 // excludes the bounding boxes of `textMarks`
-func whitespaceCover(pageSize model.PdfRectangle,
-	words []segmentationWord /*textMarks *extractor.TextMarkArray*/) []model.PdfRectangle {
+func whitespaceCover(pageSize model.PdfRectangle, words []extractor.TextMarkArray) (
+	model.PdfRectangle, rectList) {
 	maxboxes := 20
 	maxoverlap := 0.01
 	maxperim := pageSize.Width() + pageSize.Height()*0.05
 	frac := 0.01
 	maxpops := 20000
 
-	// obstacles := make([]model.PdfRectangle, 0, textMarks.Len())
-	// for _, mark := range textMarks.Elements() {
-	// 	if !validBBox(mark.BBox) {
-	// 		continue
-	// 	}
-	// 	obstacles = append(obstacles, mark.BBox)
-	// }
-	// obstacles = obstacles[:]
 	obstacles := wordBBoxes(words)
 	sigObstacles = wordBBoxMap(words)
-	return obstacleCover(pageSize, obstacles, maxboxes, maxoverlap, maxperim, frac, maxpops)
-
+	bound := pageSize
+	{
+		envelope := obstacles.union()
+		contraction, _ := geometricIntersection(bound, envelope)
+		// contraction.Llx += 100
+		// contraction.Urx -= 100
+		common.Log.Info("contraction\n\t   bound=%s\n\tenvelope=%s\n\tcontract=%s",
+			showBBox(bound), showBBox(envelope), showBBox(contraction))
+		bound = contraction
+	}
+	return bound, obstacleCover(bound, obstacles, maxboxes, maxoverlap, maxperim, frac, maxpops)
 }
 
-var sigObstacles map[float64]segmentationWord
+var sigObstacles map[float64]extractor.TextMarkArray
 
 // obstacleCover returns a best-effort maximum rectangle cover of the part of `bound` that
 // excludes  `obstacles`.
@@ -1534,16 +1332,6 @@ func obstacleCover(bound model.PdfRectangle, obstacles rectList,
 		"\tmaxoverlap=%g maxperim=%g frac=%g maxpops=%d",
 		bound, len(obstacles), maxboxes,
 		maxoverlap, maxperim, frac, maxpops)
-
-	{
-		envelope := obstacles.union()
-		contraction, _ := geometricIntersection(bound, envelope)
-		contraction.Llx += 100
-		contraction.Urx -= 100
-		common.Log.Info("contraction\n\t   bound=%s\n\tenvelope=%s\n\tcontract=%s",
-			showBBox(bound), showBBox(envelope), showBBox(contraction))
-		bound = contraction
-	}
 
 	pq := newPriorityQueue()
 	partel := newPartElt(bound, obstacles)
@@ -1766,8 +1554,10 @@ func (partel *partElt) extend(bound model.PdfRectangle, obstacles rectList) *par
 	}
 	bnd := partel.bound
 
+	common.Log.Info("extend bound=%s", showBBox(bnd))
+
 	w := bnd.Width() / 4
-	bnd.Llx += w
+	bnd.Llx += 2 * w
 	bnd.Urx -= w
 
 	bnd.Ury = bound.Ury
@@ -1775,10 +1565,10 @@ func (partel *partElt) extend(bound model.PdfRectangle, obstacles rectList) *par
 	if len(obs) > 0 {
 		bnd.Ury = obs.union().Lly
 		words := bboxWords(sigObstacles, obs)
-		common.Log.Info("Upward extention %d", len(words))
+		common.Log.Info("Upward extension %d bnd=%s", len(words), showBBox(bnd))
 		for i, w := range words {
 			b, _ := w.BBox()
-			fmt.Printf("%4d: %5.1f %s\n", i, b, w)
+			fmt.Printf("%4d: %5.1f %s\n", i, b, w.Text())
 		}
 	}
 
@@ -1787,24 +1577,24 @@ func (partel *partElt) extend(bound model.PdfRectangle, obstacles rectList) *par
 	if len(obs) > 0 {
 		bnd.Lly = obs.union().Ury
 		words := bboxWords(sigObstacles, obs)
-		common.Log.Info("Downward extention %d", len(words))
+		common.Log.Info("Downward extension %d bnd=%s", len(words), showBBox(bnd))
 		for i, w := range words {
 			b, _ := w.BBox()
-			fmt.Printf("%4d: %5.1f %s\n", i, b, w)
+			fmt.Printf("%4d: %5.1f %s\n", i, b, w.Text())
 		}
 	}
 
-	bnd.Urx = bound.Urx
-	obs = obstacles.intersects(bnd)
-	if len(obs) > 0 {
-		bnd.Urx = obs.union().Llx
-	}
+	// bnd.Urx = bound.Urx
+	// obs = obstacles.intersects(bnd)
+	// if len(obs) > 0 {
+	// 	bnd.Urx = obs.union().Llx
+	// }
 
-	bnd.Llx = bound.Llx
-	obs = obstacles.intersects(bnd)
-	if len(obs) > 0 {
-		bnd.Llx = obs.union().Urx
-	}
+	// bnd.Llx = bound.Llx
+	// obs = obstacles.intersects(bnd)
+	// if len(obs) > 0 {
+	// 	bnd.Llx = obs.union().Urx
+	// }
 
 	pe := newPartElt(bnd, obstacles.intersects(bnd))
 	common.Log.Info("extend:\n\t%s->\n\t%s", partel, pe)
