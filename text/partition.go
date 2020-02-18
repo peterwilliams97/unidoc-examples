@@ -52,7 +52,7 @@ const (
 	// key and the UNIPDF_CUSTOMER_NAME the explicitly specified customer name to which the key is
 	// licensed.
 	uniDocLicenseKey = ``
-	companyName = ""
+	companyName      = ""
 )
 
 var saveParams saveMarkedupParams
@@ -261,25 +261,25 @@ func pageMarksToColumnText(pageNum int, words []extractor.TextMarkArray, pageSiz
 	// common.Log.Info("gapSize=%.1f = %1.f mm charMultiplier=%.1f averageWidth(textMarks)=%.1f",
 	// 	gapSize, gapSize/72.0*25.4, charMultiplier, averageWidth(textMarks))
 
-	pageBound, columnBBoxes := whitespaceCover(pageSize, words)
+	pageBound, pageGaps := whitespaceCover(pageSize, words)
 	saveParams.markups[pageNum]["page"] = rectList{pageBound}
 
-	common.Log.Info("%d columns~~~~~~~~~~~~~~~~~~~ ", len(columnBBoxes))
+	common.Log.Info("%d pageGaps~~~~~~~~~~~~~~~~~~~ ", len(pageGaps))
 	var bigBBoxes rectList
-	for _, bbox := range columnBBoxes {
+	for _, bbox := range pageGaps {
 		if bbox.Height() < 20 {
 			continue
 		}
 		bigBBoxes = append(bigBBoxes, bbox)
 	}
 	common.Log.Info("%d big columns~~~~~~~~~~~~~~~~~~~ ", len(bigBBoxes))
-	columnBBoxes = bigBBoxes
+	pageGaps = bigBBoxes
 
-	for i, bbox := range columnBBoxes {
-		common.Log.Info("%4d of %d: %s", i+1, len(columnBBoxes), showBBox(bbox))
+	for i, bbox := range pageGaps {
+		common.Log.Info("%4d of %d: %s", i+1, len(pageGaps), showBBox(bbox))
 	}
 
-	saveParams.markups[saveParams.curPage]["columns"] = columnBBoxes
+	saveParams.markups[saveParams.curPage]["gaps"] = pageGaps
 
 	// columnText := getColumnText(lines, columnBBoxes)
 	// return strings.Join(columnText, "\n####\n"), nil
@@ -496,13 +496,13 @@ func wordBBoxMap(words []extractor.TextMarkArray) map[float64]extractor.TextMark
 	return sigWord
 }
 
-func bboxWords(sigWord map[float64]extractor.TextMarkArray,bboxes rectList) []extractor.TextMarkArray {
+func bboxWords(sigWord map[float64]extractor.TextMarkArray, bboxes rectList) []extractor.TextMarkArray {
 	words := make([]extractor.TextMarkArray, len(bboxes))
 	for i, b := range bboxes {
 		sig := partEltSig(b)
 		w, ok := sigWord[sig]
 		if !ok {
-			panic("signature")
+			panic(fmt.Errorf("signature: b=%s", showBBox(b)))
 		}
 		words[i] = w
 	}
@@ -1326,8 +1326,7 @@ var sigObstacles map[float64]extractor.TextMarkArray
 // Based on "wo Geometric Algorithms for Layout Analysis" by Thomas Breuel
 // https://www.researchgate.net/publication/2504221_Two_Geometric_Algorithms_for_Layout_Analysis
 func obstacleCover(bound model.PdfRectangle, obstacles rectList,
-	maxboxes int,
-	maxoverlap, maxperim, frac float64, maxpops int) rectList {
+	maxboxes int, maxoverlap, maxperim, frac float64, maxpops int) rectList {
 	common.Log.Info("whitespaceCover: bound=%5.1f obstacles=%d maxboxes=%d\n"+
 		"\tmaxoverlap=%g maxperim=%g frac=%g maxpops=%d",
 		bound, len(obstacles), maxboxes,
@@ -1384,8 +1383,129 @@ func obstacleCover(bound model.PdfRectangle, obstacles rectList,
 	// for i, s := range snaps {
 	// 	fmt.Printf("%6d: %s\n", i, s)
 	// }
-
+	cover = reduceCover(bound, cover, obstacles)
+	cover = absorbCover(bound, cover, obstacles)
 	return cover
+}
+
+func absorbCover(bound model.PdfRectangle, cover, obstacles rectList) rectList {
+	byHeight := make([]int, len(cover))
+	for i := 0; i < len(byHeight); i++ {
+		byHeight[i] = i
+	}
+	sort.SliceStable(cover, func(i, j int) bool {
+		oi, oj := cover[i], cover[j]
+		xi, xj := oi.Llx, oj.Llx
+		if xi != xj {
+			return xi < xj
+		}
+		return oi.Lly > oj.Lly
+	})
+	sort.SliceStable(byHeight, func(i, j int) bool {
+		oi, oj := cover[byHeight[i]], obstacles[byHeight[j]]
+		hi, hj := oi.Height(), oj.Height()
+		return hi < hj
+	})
+
+	absorbed := map[int]struct{}{}
+	for i := range cover {
+		if absorbedBy(cover, obstacles, i) {
+			absorbed[i] = struct{}{}
+		}
+	}
+	var reduced rectList
+	for i, r := range cover {
+		if _, ok := absorbed[i]; !ok {
+			reduced = append(reduced, r)
+		}
+	}
+	common.Log.Info("absorbCover: %d -> %d", len(cover), len(reduced))
+	return reduced
+}
+
+func absorbedBy(cover, obstacles rectList, i0 int) bool {
+	r0 := cover[i0]
+
+	for i := i0 + 1; i < len(cover); i++ {
+		r := cover[i]
+		if r.Lly <= r0.Lly && r.Ury >= r0.Ury {
+			v := r0
+			v.Urx = r.Llx
+			overl := wordCount(v, obstacles)
+			if len(overl) == 0 {
+				return true
+			}
+		}
+	}
+	for i := i0 - 1; i >= 0; i-- {
+		r := cover[i]
+		if r.Lly <= r0.Lly && r.Ury >= r0.Ury {
+			v := r0
+			v.Llx = r.Urx
+			overl := wordCount(v, obstacles)
+			if len(overl) == 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+const searchWidth = 60
+
+func reduceCover(bound model.PdfRectangle, cover, obstacles rectList) rectList {
+	reduced := make(rectList, 0, len(cover))
+	for _, r := range cover {
+		if separatingRect(r, searchWidth, obstacles) {
+			reduced = append(reduced, r)
+		}
+	}
+	common.Log.Info("reduceCover: %d -> %d", len(cover), len(reduced))
+	return reduced
+}
+
+func separatingRect(r model.PdfRectangle, w float64, obstacles rectList) bool {
+	expansion := r
+	expansion.Llx -= w
+	expansion.Urx += w
+	overl := wordCount(expansion, obstacles)
+	// words := bboxWords(sigObstacles, obstacles)
+	words := bboxWords(sigObstacles, overl)
+	var texts []string
+	for _, w := range words {
+		texts = append(texts, w.Text())
+	}
+	dy := yRange(overl)
+	common.Log.Info("r=%s dy=%.1f count=%d %v", showBBox(r), dy, len(overl), texts)
+	return len(overl) > 0 && dy > w
+}
+
+func wordCount(bound model.PdfRectangle, obstacles rectList) rectList {
+	overl := make(rectList, 0, len(obstacles))
+	for _, r := range obstacles {
+		if intersects(bound, r) {
+			overl = append(overl, r)
+		}
+	}
+	return overl
+}
+
+func yRange(obstacles rectList) float64 {
+	if len(obstacles) == 0 {
+		return 0
+	}
+
+	min := obstacles[0].Lly
+	max := obstacles[0].Lly
+	for _, r := range obstacles[1:] {
+		if r.Lly < min {
+			min = r.Lly
+		}
+		if r.Lly > max {
+			r.Lly = max
+		}
+	}
+	return max - min
 }
 
 func accept(bound model.PdfRectangle) bool {
