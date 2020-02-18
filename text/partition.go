@@ -111,7 +111,7 @@ func main() {
 	outPath := args[1]
 	err := extractColumnText(inPath, outPath, firstPage, lastPage)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %r\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 	fmt.Fprintf(os.Stderr, "markupOutputPath=%q\n", saveParams.markupOutputPath)
@@ -216,7 +216,7 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 
 		outPageText, err := pageMarksToColumnText(pageNum, words, *mbox)
 		if err != nil {
-			common.Log.Debug("Error grouping text: %r", err)
+			common.Log.Debug("Error grouping text: %v", err)
 			return err
 		}
 		header := fmt.Sprintf("----------------\n ### PAGE %d of %d", pageNum, numPages)
@@ -280,6 +280,10 @@ func pageMarksToColumnText(pageNum int, words []extractor.TextMarkArray, pageSiz
 	}
 
 	saveParams.markups[saveParams.curPage]["gaps"] = pageGaps
+
+	columns := scanPage(pageBound, pageGaps)
+
+	saveParams.markups[saveParams.curPage]["columns"] = columns
 
 	// columnText := getColumnText(lines, columnBBoxes)
 	// return strings.Join(columnText, "\n####\n"), nil
@@ -573,7 +577,7 @@ func (ss scanState) String() string {
 	sort.Ints(ids)
 	lines = append(lines, fmt.Sprintf("--- gapStack=%d", len(ss.gapStack)))
 	for _, id := range ids {
-		lines = append(lines, fmt.Sprintf("%4d: %r", id, ss.gapStack[id]))
+		lines = append(lines, fmt.Sprintf("%4d: %v", id, ss.gapStack[id]))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -610,7 +614,7 @@ func (idr idRect) validate() {
 	}
 }
 
-func scanPage(pageGaps rectList, pageSize model.PdfRectangle) rectList {
+func scanPage(pageSize model.PdfRectangle, pageGaps rectList) rectList {
 	ss := newScanState(pageSize)
 	slines := ss.gapsToScanLines(pageGaps)
 	common.Log.Info("scanPage %s", ss)
@@ -663,6 +667,7 @@ func newScanState(pageSize model.PdfRectangle) *scanState {
 func (ss *scanState) newIDRect(r model.PdfRectangle) idRect {
 	id := len(ss.store) + 1
 	idr := idRect{id: id, PdfRectangle: r}
+	idr.validate()
 	ss.store[id] = idr
 	return idr
 }
@@ -687,7 +692,12 @@ func (ss *scanState) open(sl scanLine) {
 	closed := difference(ss.running, running)
 	common.Log.Info("\n\tss.running=%s\n\t   running=%s\n\t    closed=%s", ss.running, running, closed)
 	for _, idr := range closed {
+		idr.validate()
+		if sl.y <= idr.Ury {
+			continue
+		}
 		idr.Lly = sl.y
+		idr.validate()
 		ss.completed = append(ss.completed, idr)
 	}
 	ss.running = running
@@ -1129,7 +1139,7 @@ func saveMarkedupPDF(params saveMarkedupParams) error {
 		}
 		if page.MediaBox == nil {
 			// Deal with MediaBox inherited from Parent.
-			common.Log.Info("MediaBox: %r -> %r", page.MediaBox, mediaBox)
+			common.Log.Info("MediaBox: %v -> %v", page.MediaBox, mediaBox)
 			page.MediaBox = mediaBox
 		}
 		h := mediaBox.Ury
@@ -1156,8 +1166,8 @@ func saveMarkedupPDF(params saveMarkedupParams) error {
 			for i, r := range group {
 				common.Log.Debug("Mark %d: %5.1f x,y,w,h=%5.1f %5.1f %5.1f %5.1f", i+1, r,
 					r.Llx, h-r.Lly, r.Urx-r.Llx, -(r.Ury - r.Lly))
-				dx := 0.5
-				dy := 0.5
+				dx := 10.0
+				dy := 10.0
 				if r.Urx-r.Llx < 20.0*dx {
 					dx = (r.Urx - r.Llx) / 20.0
 				}
@@ -1175,7 +1185,7 @@ func saveMarkedupPDF(params saveMarkedupParams) error {
 
 				rect := c.NewRectangle(llx, h-lly, urx-llx, -(ury - lly))
 				rect.SetBorderColor(bgdColor)
-				rect.SetBorderWidth(1.5 * width)
+				rect.SetBorderWidth(2.0 * width)
 				err = c.Draw(rect)
 				if err != nil {
 					return fmt.Errorf("Draw failed (background). pageNum=%d err=%w", pageNum, err)
@@ -1207,16 +1217,16 @@ var (
 		"lines":   0.2,
 		"divs":    0.6,
 		"gaps":    0.9,
-		"columns": 1.0,
+		"columns": 0.8,
 		"page":    1.1,
 	}
 	colors = map[string]string{
 		"marks":   "#0000ff",
-		"words":   "#00ff00",
-		"lines":   "#ff0000",
+		"words":   "#ff0000",
+		"lines":   "#f0f000",
 		"divs":    "#ffff00",
 		"gaps":    "#0000ff",
-		"columns": "#f0f000",
+		"columns": "#00ff00",
 		"page":    "#00aabb",
 	}
 	bkgnds = map[string]string{
@@ -1225,7 +1235,7 @@ var (
 		"lines":   "#00afaf",
 		"divs":    "#0000ff",
 		"gaps":    "#ffff00",
-		"columns": "#000077",
+		"columns": "#ff00ff",
 		"page":    "#ff0000",
 	}
 )
@@ -1401,49 +1411,84 @@ func absorbCover(bound model.PdfRectangle, cover, obstacles rectList) rectList {
 		}
 		return oi.Lly > oj.Lly
 	})
-	sort.SliceStable(byHeight, func(i, j int) bool {
-		oi, oj := cover[byHeight[i]], obstacles[byHeight[j]]
+	sort.Slice(byHeight, func(i, j int) bool {
+		oi, oj := cover[byHeight[i]], cover[byHeight[j]]
 		hi, hj := oi.Height(), oj.Height()
-		return hi < hj
+		if hi != hj {
+			return hi < hj
+		}
+		wi, wj := oi.Width(), oj.Width()
+		if wi != wj {
+			return wi < wj
+		}
+		return i < j
 	})
+	common.Log.Info("byHeight=%v", byHeight)
+	common.Log.Info("cover-------------")
+	for i, r := range cover {
+		fmt.Printf("%3d: %s\n", i, showBBox(r))
+	}
+	common.Log.Info("byHeight-------------")
+	for i, i0 := range byHeight {
+		r := cover[i0]
+		fmt.Printf("%3d: %3d: %s\n", i, i0, showBBox(r))
+	}
 
 	absorbed := map[int]struct{}{}
 	for i := range cover {
-		if absorbedBy(cover, obstacles, i) {
+		if absorbedBy(cover, obstacles, i, absorbed) {
 			absorbed[i] = struct{}{}
 		}
 	}
+
 	var reduced rectList
-	for i, r := range cover {
-		if _, ok := absorbed[i]; !ok {
+	for i, i0 := range byHeight {
+		r := cover[i0]
+		_, ok := absorbed[i0]
+		if !ok {
 			reduced = append(reduced, r)
 		}
+		fmt.Printf("%3d: %3d: %s %t\n", i, i0, showBBox(r), ok)
 	}
 	common.Log.Info("absorbCover: %d -> %d", len(cover), len(reduced))
 	return reduced
 }
 
-func absorbedBy(cover, obstacles rectList, i0 int) bool {
+func absorbedBy(cover, obstacles rectList, i0 int, absorbed map[int]struct{}) bool {
 	r0 := cover[i0]
 
 	for i := i0 + 1; i < len(cover); i++ {
+		if _, ok := absorbed[i]; ok {
+			continue
+		}
 		r := cover[i]
 		if r.Lly <= r0.Lly && r.Ury >= r0.Ury {
 			v := r0
 			v.Urx = r.Llx
+			v.Ury -= 2 // To exclude tiny overlaps
+			v.Lly += 2 // To exclude tiny overlaps
 			overl := wordCount(v, obstacles)
 			if len(overl) == 0 {
+				common.Log.Info("-absorbed v=%s\n\t%s %d by\n\t%s %d",
+					showBBox(v), showBBox(r0), i0, showBBox(r), i)
 				return true
 			}
 		}
 	}
 	for i := i0 - 1; i >= 0; i-- {
+		if _, ok := absorbed[i]; ok {
+			continue
+		}
 		r := cover[i]
 		if r.Lly <= r0.Lly && r.Ury >= r0.Ury {
 			v := r0
 			v.Llx = r.Urx
+			v.Ury -= 2 // To exclude tiny overlaps
+			v.Lly += 2 // To exclude tiny overlaps
 			overl := wordCount(v, obstacles)
 			if len(overl) == 0 {
+				common.Log.Info("+absorbed v=%s\n\t%s %d by\n\t%s %d",
+					showBBox(v), showBBox(r0), i0, showBBox(r), i)
 				return true
 			}
 		}
@@ -1781,7 +1826,7 @@ func (pq *PriorityQueue) myPush(partel *partElt) {
 	for _, pe := range pq.elems {
 		if pe.sig == partel.sig {
 			err := fmt.Errorf("duplicate:\n\tpartel=%s\n\t    pe=%s", partel, pe)
-			common.Log.Error("myPush %r", err)
+			common.Log.Error("myPush %v", err)
 			return
 		}
 	}
@@ -1922,7 +1967,8 @@ func validBBox(r model.PdfRectangle) bool {
 func showBBox(r model.PdfRectangle) string {
 	w := r.Urx - r.Llx
 	h := r.Ury - r.Lly
-	return fmt.Sprintf("%5.1f %5.1fx%5.1f=%5.1f", r, w, h, partEltQuality(r))
+	return fmt.Sprintf("%5.1f %5.1fx%5.1f", r, w, h)
+	// return fmt.Sprintf("%5.1f %5.1fx%5.1f=%5.1f", r, w, h, partEltQuality(r))
 }
 
 func same(x0, x1 float64) bool {
