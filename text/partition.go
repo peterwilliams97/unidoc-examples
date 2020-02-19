@@ -52,7 +52,7 @@ const (
 	// key and the UNIPDF_CUSTOMER_NAME the explicitly specified customer name to which the key is
 	// licensed.
 	uniDocLicenseKey = ``
-	companyName      = ""
+	companyName = ""
 )
 
 var saveParams saveMarkedupParams
@@ -241,7 +241,7 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 
 // pageMarksToColumnText converts `textMarks`, the text marks from a single page, into a string by
 // grouping the marks into words, lines and columns and then merging the column texts.
-func pageMarksToColumnText(pageNum int, words []extractor.TextMarkArray, pageSize model.PdfRectangle) (
+func pageMarksToColumnText(pageNum int, words []extractor.TextMarkArray, pageBound model.PdfRectangle) (
 	string, error) {
 
 	// Include the words in the markup.
@@ -261,7 +261,7 @@ func pageMarksToColumnText(pageNum int, words []extractor.TextMarkArray, pageSiz
 	// common.Log.Info("gapSize=%.1f = %1.f mm charMultiplier=%.1f averageWidth(textMarks)=%.1f",
 	// 	gapSize, gapSize/72.0*25.4, charMultiplier, averageWidth(textMarks))
 
-	pageBound, pageGaps := whitespaceCover(pageSize, words)
+	pageBound, pageGaps := whitespaceCover(pageBound, words)
 	saveParams.markups[pageNum]["page"] = rectList{pageBound}
 
 	common.Log.Info("%d pageGaps~~~~~~~~~~~~~~~~~~~ ", len(pageGaps))
@@ -543,7 +543,7 @@ func overlappedX01(r0, r1 model.PdfRectangle) bool {
 }
 
 type scanState struct {
-	pageSize  model.PdfRectangle
+	pageBound model.PdfRectangle
 	running   []idRect      // must be sorted left to right
 	gapStack  map[int][]int // {gap id: columns that gap intersects}
 	completed []idRect
@@ -587,6 +587,19 @@ type scanLine struct {
 	events []scanEvent
 }
 
+func (sl scanLine) toRectList() rectList {
+	rl := make(rectList, len(sl.events))
+	for i, e := range sl.events {
+		rl[i] = e.PdfRectangle
+	}
+	return rl
+}
+
+func (sl scanLine) checkOverlaps() {
+	rl := sl.toRectList()
+	rl.checkOverlaps()
+}
+
 func (sl scanLine) String() string {
 	parts := make([]string, len(sl.events))
 	for i, e := range sl.events {
@@ -607,15 +620,19 @@ type idRect struct {
 
 func (idr idRect) validate() {
 	if !validBBox(idr.PdfRectangle) {
-		panic(fmt.Errorf("idr.validate x %s", idr))
+		panic(fmt.Errorf("idr.validate rect %s", idr))
 	}
 	if idr.id <= 0 {
 		panic(fmt.Errorf("validate id %s", idr))
 	}
 }
 
-func scanPage(pageSize model.PdfRectangle, pageGaps rectList) rectList {
-	ss := newScanState(pageSize)
+// scanPage returns the rectangles in `pageBound` that are separated by `pageGaps`.
+func scanPage(pageBound model.PdfRectangle, pageGaps rectList) rectList {
+	if len(pageGaps) == 0 {
+		return rectList{pageBound}
+	}
+	ss := newScanState(pageBound)
 	slines := ss.gapsToScanLines(pageGaps)
 	common.Log.Info("scanPage %s", ss)
 	ss.validate()
@@ -632,7 +649,7 @@ func scanPage(pageSize model.PdfRectangle, pageGaps rectList) rectList {
 			ss.validate()
 		}
 	}
-	common.Log.Info("scanPage: pageGaps=%d pageSize=%5.1f", len(pageGaps), pageSize)
+	common.Log.Info("scanPage: pageGaps=%d pageBound=%5.1f", len(pageGaps), pageBound)
 	for i, c := range pageGaps {
 		fmt.Printf("%4d: %5.1f\n", i, c)
 	}
@@ -651,13 +668,13 @@ func scanPage(pageSize model.PdfRectangle, pageGaps rectList) rectList {
 	return columns
 }
 
-func newScanState(pageSize model.PdfRectangle) *scanState {
+func newScanState(pageBound model.PdfRectangle) *scanState {
 	ss := scanState{
-		pageSize: pageSize,
-		gapStack: map[int][]int{},
-		store:    map[int]idRect{},
+		pageBound: pageBound,
+		gapStack:  map[int][]int{},
+		store:     map[int]idRect{},
 	}
-	r := model.PdfRectangle{Llx: pageSize.Llx, Urx: pageSize.Urx, Ury: pageSize.Ury}
+	r := model.PdfRectangle{Llx: pageBound.Llx, Urx: pageBound.Urx, Ury: pageBound.Ury}
 	idr := ss.newIDRect(r)
 	ss.running = append(ss.running, idr)
 
@@ -688,8 +705,8 @@ func (ss *scanState) open(sl scanLine) {
 	if len(sl.opened()) == 0 {
 		return
 	}
-	running := ss.intersect(ss.running, sl.opened(), sl.y)
-	closed := difference(ss.running, running)
+	running := ss.intersectingElements(ss.running, sl.opened(), sl.y)
+	closed := differentElements(ss.running, running)
 	common.Log.Info("\n\tss.running=%s\n\t   running=%s\n\t    closed=%s", ss.running, running, closed)
 	for _, idr := range closed {
 		idr.validate()
@@ -711,7 +728,7 @@ func (ss *scanState) close(sl scanLine) {
 		return
 	}
 	oldRunning := ss.popIntersect(sl.closed())
-	closed := difference(ss.running, oldRunning)
+	closed := differentElements(ss.running, oldRunning)
 	common.Log.Info("\n\tss.running=%s\n\toldRunning=%s\n\t    closed=%s", ss.running, oldRunning, closed)
 	for i, idr := range closed {
 		if sl.y == idr.Ury {
@@ -731,8 +748,8 @@ func (ss *scanState) close(sl scanLine) {
 	ss.running = running
 }
 
-// difference returns the elements in `a` that aren't in `b`.
-func difference(a, b []idRect) []idRect {
+// differentElements returns the elements in `a` that aren't in `b`.
+func differentElements(a, b []idRect) []idRect {
 	bs := map[int]struct{}{}
 	for _, idr := range b {
 		bs[idr.id] = struct{}{}
@@ -746,7 +763,17 @@ func difference(a, b []idRect) []idRect {
 	return diff
 }
 
-func (ss *scanState) intersect(columns, gaps []idRect, y float64) []idRect {
+// intersectingElements returns the intesection of `columns` and `gaps` along the x-axis at y=`y`.
+func (ss *scanState) intersectingElements(columns, gaps []idRect, y float64) []idRect {
+	// {
+	// 	g0 := gaps[0]
+	// 	for _, g := range gaps[1:] {
+	// 		if g.Llx <= g0.Urx {
+	// 			panic(fmt.Errorf("overlapping\n\tg0=%s\n\t g=%s", g0, g))
+	// 		}
+	// 		g0 = g
+	// 	}
+	// }
 	for _, g := range gaps {
 		for _, c := range columns {
 			if overlappedX(c.PdfRectangle, g.PdfRectangle) {
@@ -755,14 +782,15 @@ func (ss *scanState) intersect(columns, gaps []idRect, y float64) []idRect {
 		}
 	}
 	var columns1 []idRect
-	for _, c := range columns {
-		olap := touchingGaps(c, gaps)
+	for i, c := range columns {
+		olap := overlappedXElements(c, gaps)
 		if len(olap) == 0 {
 			idr := ss.newIDRect(c.PdfRectangle)
 			columns1 = append(columns1, idr)
 			common.Log.Info("columns1=%d idr=%s", len(columns1), idr)
 			continue
 		}
+		common.Log.Info("## %3d of %d: %s olap=%d %s", i, len(columns), c, len(olap), olap[0])
 		if olap[0].Llx <= c.Llx {
 			c.Llx = olap[0].Urx
 			olap = olap[1:]
@@ -786,12 +814,17 @@ func (ss *scanState) intersect(columns, gaps []idRect, y float64) []idRect {
 			continue
 		}
 		x0 := c.Llx
-		for _, g := range olap {
+		for j, g := range olap {
+			common.Log.Info("#@ %3d of %d: %s", j, len(olap), g)
 			x1 := g.Llx
+			if x1 <= x0 {
+				continue // overlap
+				panic(fmt.Errorf("x0=%.1f x1=%.1f", x0, x1))
+			}
 			r := model.PdfRectangle{Llx: x0, Urx: x1, Ury: y}
 			idr := ss.newIDRect(r)
 			columns1 = append(columns1, idr)
-			common.Log.Info("columns1=%d idr=%s", len(columns1), idr)
+			common.Log.Debug("columns1=%d idr=%s", len(columns1), idr)
 			x0 = g.Urx
 		}
 		x1 := c.Urx
@@ -803,13 +836,13 @@ func (ss *scanState) intersect(columns, gaps []idRect, y float64) []idRect {
 	return columns1
 }
 
-func touchingGaps(col idRect, gaps []idRect) []idRect {
+// overlappedXElements returns the elements of `gaps` that overlap `col` on the x-axis.
+func overlappedXElements(col idRect, gaps []idRect) []idRect {
 	var olap []idRect
 	for _, g := range gaps {
-		if !overlappedX(col.PdfRectangle, g.PdfRectangle) {
-			continue
+		if overlappedX(col.PdfRectangle, g.PdfRectangle) {
+			olap = append(olap, g)
 		}
-		olap = append(olap, g)
 	}
 	return olap
 }
@@ -827,6 +860,7 @@ func (ss *scanState) popIntersect(gaps []idRect) []idRect {
 	return columns1
 }
 
+// gapsToScanLines creates the list of scan lines corresponding to gaps `pageGaps`.
 func (ss *scanState) gapsToScanLines(pageGaps rectList) []scanLine {
 	events := make([]scanEvent, 2*len(pageGaps))
 	for i, gap := range pageGaps {
@@ -849,9 +883,12 @@ func (ss *scanState) gapsToScanLines(pageGaps rectList) []scanLine {
 	var slines []scanLine
 	e := events[0]
 	sl := scanLine{y: e.y(), events: []scanEvent{e}}
-	for _, e := range events[1:] {
+	sl.checkOverlaps()
+	for i, e := range events[1:] {
+		common.Log.Info("! %2d of %d: %s", i+1, len(events), e)
 		if e.y() > sl.y-1.0 {
 			sl.events = append(sl.events, e)
+			// sl.checkOverlaps()
 		} else {
 			slines = append(slines, sl)
 			sl = scanLine{y: e.y(), events: []scanEvent{e}}
@@ -861,9 +898,8 @@ func (ss *scanState) gapsToScanLines(pageGaps rectList) []scanLine {
 	return slines
 }
 
-func (sl scanLine) columnsScan(pageSize model.PdfRectangle, enter bool) (
+func (sl scanLine) columnsScan(pageBound model.PdfRectangle, enter bool) (
 	opened, closed rectList) {
-
 	addCol := func(x0, x1 float64) {
 		if x1 > x0 {
 			r := model.PdfRectangle{Llx: x0, Urx: x1, Ury: sl.y}
@@ -874,7 +910,7 @@ func (sl scanLine) columnsScan(pageSize model.PdfRectangle, enter bool) (
 			}
 		}
 	}
-	x0 := pageSize.Llx
+	x0 := pageBound.Llx
 	for _, e := range sl.events {
 		if e.enter != enter {
 			continue
@@ -883,8 +919,10 @@ func (sl scanLine) columnsScan(pageSize model.PdfRectangle, enter bool) (
 		addCol(x0, x1)
 		x0 = e.Urx
 	}
-	x1 := pageSize.Urx
+	x1 := pageBound.Urx
 	addCol(x0, x1)
+	opened.checkOverlaps()
+	closed.checkOverlaps()
 	return opened, closed
 }
 
@@ -895,6 +933,7 @@ func (sl scanLine) opened() []idRect {
 			idrs = append(idrs, e.idRect)
 		}
 	}
+	// checkOverlaps(idrs)
 	return idrs
 }
 
@@ -905,11 +944,12 @@ func (sl scanLine) closed() []idRect {
 			idrs = append(idrs, e.idRect)
 		}
 	}
+	// checkOverlaps(idrs)
 	return idrs
 }
 
 func (idr idRect) String() string {
-	return fmt.Sprintf("(%4d %5.1f)", idr.id, idr.PdfRectangle)
+	return fmt.Sprintf("(%4d %s)", idr.id, showBBox(idr.PdfRectangle))
 }
 
 func (e scanEvent) String() string {
@@ -1156,7 +1196,15 @@ func saveMarkedupPDF(params saveMarkedupParams) error {
 				continue
 			}
 
-			common.Log.Info("markupType=%q", markupType)
+			dx := 10.0
+			dy := 10.0
+			if markupType == "marks" || len(params.shownMarkups) <= 2 {
+				dx = 0.0
+				dy = 0.0
+			}
+
+			common.Log.Info("markupType=%q dx=%.1f dy=%.1f markups[%d]=%d",
+				markupType, dx, dy, pageNum, len(params.shownMarkups))
 
 			width := widths[markupType]
 			borderColor := creator.ColorRGBFromHex(colors[markupType])
@@ -1166,18 +1214,17 @@ func saveMarkedupPDF(params saveMarkedupParams) error {
 			for i, r := range group {
 				common.Log.Debug("Mark %d: %5.1f x,y,w,h=%5.1f %5.1f %5.1f %5.1f", i+1, r,
 					r.Llx, h-r.Lly, r.Urx-r.Llx, -(r.Ury - r.Lly))
-				dx := 10.0
-				dy := 10.0
+
 				if r.Urx-r.Llx < 20.0*dx {
 					dx = (r.Urx - r.Llx) / 20.0
 				}
 				if r.Ury-r.Lly < 20.0*dy {
 					dy = (r.Ury - r.Lly) / 20.0
 				}
-				if markupType == "marks" {
-					dx = 0.0
-					dy = 0.0
+				if dx < 0 || dy < 0 {
+					panic("dx dy ")
 				}
+
 				llx := r.Llx + dx
 				urx := r.Urx - dx
 				lly := r.Lly + dy
@@ -1304,19 +1351,19 @@ func changePath(filename, insertion, ext string) string {
 	return fmt.Sprintf("%s.%s%s", filename, insertion, ext)
 }
 
-// whitespaceCover returns a best-effort maximum rectangle cover of the part of `pageSize` that
+// whitespaceCover returns a best-effort maximum rectangle cover of the part of `pageBound` that
 // excludes the bounding boxes of `textMarks`
-func whitespaceCover(pageSize model.PdfRectangle, words []extractor.TextMarkArray) (
+func whitespaceCover(pageBound model.PdfRectangle, words []extractor.TextMarkArray) (
 	model.PdfRectangle, rectList) {
 	maxboxes := 20
 	maxoverlap := 0.01
-	maxperim := pageSize.Width() + pageSize.Height()*0.05
+	maxperim := pageBound.Width() + pageBound.Height()*0.05
 	frac := 0.01
 	maxpops := 20000
 
 	obstacles := wordBBoxes(words)
 	sigObstacles = wordBBoxMap(words)
-	bound := pageSize
+	bound := pageBound
 	{
 		envelope := obstacles.union()
 		contraction, _ := geometricIntersection(bound, envelope)
@@ -1341,11 +1388,14 @@ func obstacleCover(bound model.PdfRectangle, obstacles rectList,
 		"\tmaxoverlap=%g maxperim=%g frac=%g maxpops=%d",
 		bound, len(obstacles), maxboxes,
 		maxoverlap, maxperim, frac, maxpops)
-
+	if len(obstacles) == 0 {
+		return nil
+	}
 	pq := newPriorityQueue()
 	partel := newPartElt(bound, obstacles)
 	pq.myPush(partel)
 	var cover rectList
+
 	// var snaps []string
 	for cnt := 0; pq.Len() > 0; cnt++ {
 		partel := pq.myPop()
@@ -1393,11 +1443,13 @@ func obstacleCover(bound model.PdfRectangle, obstacles rectList,
 	// for i, s := range snaps {
 	// 	fmt.Printf("%6d: %s\n", i, s)
 	// }
-	cover = reduceCover(bound, cover, obstacles)
+	cover = removeNonSeparating(bound, cover, obstacles)
 	cover = absorbCover(bound, cover, obstacles)
 	return cover
 }
 
+// absorbCover removes adjacent gaps (elements of `cover`) which have no intervening text.
+// It removes shorter gaps first.
 func absorbCover(bound model.PdfRectangle, cover, obstacles rectList) rectList {
 	byHeight := make([]int, len(cover))
 	for i := 0; i < len(byHeight); i++ {
@@ -1423,16 +1475,16 @@ func absorbCover(bound model.PdfRectangle, cover, obstacles rectList) rectList {
 		}
 		return i < j
 	})
-	common.Log.Info("byHeight=%v", byHeight)
-	common.Log.Info("cover-------------")
-	for i, r := range cover {
-		fmt.Printf("%3d: %s\n", i, showBBox(r))
-	}
-	common.Log.Info("byHeight-------------")
-	for i, i0 := range byHeight {
-		r := cover[i0]
-		fmt.Printf("%3d: %3d: %s\n", i, i0, showBBox(r))
-	}
+	// common.Log.Info("byHeight=%v", byHeight)
+	// common.Log.Info("cover-------------")
+	// for i, r := range cover {
+	// 	fmt.Printf("%3d: %s\n", i, showBBox(r))
+	// }
+	// common.Log.Info("byHeight-------------")
+	// for i, i0 := range byHeight {
+	// 	r := cover[i0]
+	// 	fmt.Printf("%3d: %3d: %s\n", i, i0, showBBox(r))
+	// }
 
 	absorbed := map[int]struct{}{}
 	for i := range cover {
@@ -1454,6 +1506,8 @@ func absorbCover(bound model.PdfRectangle, cover, obstacles rectList) rectList {
 	return reduced
 }
 
+// absorbedBy returns true if `cover`[`i0`] has no intervening `obstacles` with at least one other
+// element of `cover`. `absorbed` are the indexes of previously removed elements of cover.
 func absorbedBy(cover, obstacles rectList, i0 int, absorbed map[int]struct{}) bool {
 	r0 := cover[i0]
 
@@ -1498,21 +1552,24 @@ func absorbedBy(cover, obstacles rectList, i0 int, absorbed map[int]struct{}) bo
 
 const searchWidth = 60
 
-func reduceCover(bound model.PdfRectangle, cover, obstacles rectList) rectList {
+// removeNonSeparating returns `cover` stripped of elements that don't separate elements of `obstacles`.
+func removeNonSeparating(bound model.PdfRectangle, cover, obstacles rectList) rectList {
 	reduced := make(rectList, 0, len(cover))
 	for _, r := range cover {
 		if separatingRect(r, searchWidth, obstacles) {
 			reduced = append(reduced, r)
 		}
 	}
-	common.Log.Info("reduceCover: %d -> %d", len(cover), len(reduced))
+	common.Log.Info("removeNonSeparating: %d -> %d", len(cover), len(reduced))
 	return reduced
 }
 
-func separatingRect(r model.PdfRectangle, w float64, obstacles rectList) bool {
+// separatingRect returns true if `r` separates sufficient elements of `obstacles` (bounding boxes
+// of words). We search `width` to left and right of `r` for these elements.
+func separatingRect(r model.PdfRectangle, width float64, obstacles rectList) bool {
 	expansion := r
-	expansion.Llx -= w
-	expansion.Urx += w
+	expansion.Llx -= width
+	expansion.Urx += width
 	overl := wordCount(expansion, obstacles)
 	// words := bboxWords(sigObstacles, obstacles)
 	words := bboxWords(sigObstacles, overl)
@@ -1522,7 +1579,7 @@ func separatingRect(r model.PdfRectangle, w float64, obstacles rectList) bool {
 	}
 	dy := yRange(overl)
 	common.Log.Info("r=%s dy=%.1f count=%d %v", showBBox(r), dy, len(overl), texts)
-	return len(overl) > 0 && dy > w
+	return len(overl) > 0 && dy > width
 }
 
 func wordCount(bound model.PdfRectangle, obstacles rectList) rectList {
@@ -1555,17 +1612,19 @@ func yRange(obstacles rectList) float64 {
 
 func accept(bound model.PdfRectangle) bool {
 	// return math.Max(bound.Height(), bound.Width()) > 40.0
-	if bound.Height() > 40.0 && bound.Width() > 5.0 {
+	if bound.Height() > 30.0 && bound.Width() > 10.0 {
 		return true
 	}
-	// if bound.Height() > 5.0 && bound.Width() > 40.0 {
-	// 	return true
-	// }
+	if bound.Height() > 5.0 && bound.Width() > 50.0 {
+		return true
+	}
 	return false
 }
 
 func partEltQuality(r model.PdfRectangle) float64 {
-	return r.Height() + 0.1*r.Width()
+	x := 0.1*r.Height() + r.Width()
+	y := r.Height() + 0.1*r.Width()
+	return math.Max(0.5*x, y)
 }
 
 func partEltSig(r model.PdfRectangle) float64 {
@@ -1729,24 +1788,24 @@ func (partel *partElt) extend(bound model.PdfRectangle, obstacles rectList) *par
 	obs := obstacles.intersects(bnd)
 	if len(obs) > 0 {
 		bnd.Ury = obs.union().Lly
-		words := bboxWords(sigObstacles, obs)
-		common.Log.Info("Upward extension %d bnd=%s", len(words), showBBox(bnd))
-		for i, w := range words {
-			b, _ := w.BBox()
-			fmt.Printf("%4d: %5.1f %s\n", i, b, w.Text())
-		}
+		// words := bboxWords(sigObstacles, obs)
+		// common.Log.Info("Upward extension %d bnd=%s", len(words), showBBox(bnd))
+		// for i, w := range words {
+		// 	b, _ := w.BBox()
+		// 	fmt.Printf("%4d: %5.1f %s\n", i, b, w.Text())
+		// }
 	}
 
 	bnd.Lly = bound.Lly
 	obs = obstacles.intersects(bnd)
 	if len(obs) > 0 {
 		bnd.Lly = obs.union().Ury
-		words := bboxWords(sigObstacles, obs)
-		common.Log.Info("Downward extension %d bnd=%s", len(words), showBBox(bnd))
-		for i, w := range words {
-			b, _ := w.BBox()
-			fmt.Printf("%4d: %5.1f %s\n", i, b, w.Text())
-		}
+		// words := bboxWords(sigObstacles, obs)
+		// common.Log.Info("Downward extension %d bnd=%s", len(words), showBBox(bnd))
+		// for i, w := range words {
+		// 	b, _ := w.BBox()
+		// 	fmt.Printf("%4d: %5.1f %s\n", i, b, w.Text())
+		// }
 	}
 
 	// bnd.Urx = bound.Urx
@@ -1857,6 +1916,30 @@ func (pq *PriorityQueue) Pop() interface{} {
 }
 
 type rectList []model.PdfRectangle
+
+func (rl rectList) checkOverlaps() {
+	if len(rl) == 0 {
+		return
+	}
+	r0 := rl[0]
+	for _, r := range rl[1:] {
+		if r.Llx <= r0.Urx {
+			panic(fmt.Errorf("checkOverlaps:\n\tr0=%s\n\t r=%s", showBBox(r0), showBBox(r)))
+		}
+	}
+}
+
+func checkOverlaps(rl []idRect) {
+	if len(rl) == 0 {
+		return
+	}
+	r0 := rl[0]
+	for _, r := range rl[1:] {
+		if r.Llx <= r0.Urx {
+			panic(fmt.Errorf("checkOverlaps:\n\tr0=%s\n\t r=%s", r0, r))
+		}
+	}
+}
 
 func (rl rectList) union() model.PdfRectangle {
 	var u model.PdfRectangle
