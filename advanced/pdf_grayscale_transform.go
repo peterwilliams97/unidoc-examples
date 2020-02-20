@@ -520,6 +520,9 @@ func transformContentStreamToGrayscale(contents string, resources *pdf.PdfPageRe
 					fmt.Printf("Error w/GetXObjectImageByName : %v\n", err)
 					return err
 				}
+				if _, isGray := ximg.ColorSpace.(*pdf.PdfColorspaceDeviceGray); isGray {
+					return nil
+				}
 
 				img, err := ximg.ToImage()
 				if err != nil {
