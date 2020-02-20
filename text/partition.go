@@ -51,8 +51,12 @@ const (
 	// environment variables,  where UNIPDF_LICENSE_PATH points to the file containing the license
 	// key and the UNIPDF_CUSTOMER_NAME the explicitly specified customer name to which the key is
 	// licensed.
-	uniDocLicenseKey = ``
-	companyName = ""
+	uniDocLicenseKey = `-----BEGIN UNIDOC LICENSE KEY-----
+eyJsaWNlbnNlX2lkIjoiYjZjNTllZGEtMGM5NC00MjMzLTYxZmMtYzE5NjdkODgwY2QzIiwiY3VzdG9tZXJfaWQiOiJjZDNlZmJiZi05NDIyLTQ0ZjEtNTcxYy05NzgyMmNkYWFlMjEiLCJjdXN0b21lcl9uYW1lIjoiUGFwZXJDdXQgU29mdHdhcmUgSW50ZXJuYXRpb25hbCBQdHkgTHRkIiwiY3VzdG9tZXJfZW1haWwiOiJhY2NvdW50c0BwYXBlcmN1dC5jb20iLCJ0aWVyIjoiYnVzaW5lc3MiLCJjcmVhdGVkX2F0IjoxNTYxNjY1NjI5LCJleHBpcmVzX2F0IjoxNTkzMzAyMzk5LCJjcmVhdG9yX25hbWUiOiJVbmlEb2MgU3VwcG9ydCIsImNyZWF0b3JfZW1haWwiOiJzdXBwb3J0QHVuaWRvYy5pbyIsInVuaXBkZiI6dHJ1ZSwidW5pb2ZmaWNlIjpmYWxzZSwidHJpYWwiOmZhbHNlfQ==
++
+jqfCPGZxtGEQ1hFui9dQLB9iPUhS715HPRW30eYpfiDKaM3SEpThz/GCLNj4dO3aZmE9UHF+ir4BRnOIA8lymRL8Y+690JBzJFfdE0nIqZGQ+NwrU3bRqkND94XWRE+eE+hkY6DnjNxr7DwyPnKyYMppVwHelMKI5s8GJZObVYbcXoDQOC0R5Z5ckL6BemmkE7I6Xna2jAVAl+YSgsoz6fyA6je71A2kqZmoYm5U1g7NfQQpkLZpClvC97tkIH7qeaf8xQNCN9hyMo0uYAFZ/pUJfzEjZDtWHqcYBIAdoKvE/IL7OcUZKqSGvKgmyvkvWeJqw4iw9p9nh8pDNc5nfQ==
+-----END UNIDOC LICENSE KEY-----`
+	companyName = "PaperCut Software International Pty Ltd"
 )
 
 var saveParams saveMarkedupParams
@@ -262,7 +266,7 @@ func pageMarksToColumnText(pageNum int, words []extractor.TextMarkArray, pageBou
 	// 	gapSize, gapSize/72.0*25.4, charMultiplier, averageWidth(textMarks))
 
 	pageBound, pageGaps := whitespaceCover(pageBound, words)
-	saveParams.markups[pageNum]["page"] = rectList{pageBound}
+	// saveParams.markups[pageNum]["page"] = rectList{pageBound}
 
 	common.Log.Info("%d pageGaps~~~~~~~~~~~~~~~~~~~ ", len(pageGaps))
 	var bigBBoxes rectList
@@ -272,7 +276,7 @@ func pageMarksToColumnText(pageNum int, words []extractor.TextMarkArray, pageBou
 		}
 		bigBBoxes = append(bigBBoxes, bbox)
 	}
-	common.Log.Info("%d big columns~~~~~~~~~~~~~~~~~~~ ", len(bigBBoxes))
+	common.Log.Info("%d big pageGaps~~~~~~~~~~~~~~~~~~~ ", len(bigBBoxes))
 	pageGaps = bigBBoxes
 
 	for i, bbox := range pageGaps {
@@ -582,9 +586,10 @@ func (ss scanState) String() string {
 	return strings.Join(lines, "\n")
 }
 
+// scanLine is a list of scan events with the same y() value.
 type scanLine struct {
-	y      float64
-	events []scanEvent
+	y      float64     // e.y() ∀ e ∈ `events`.
+	events []scanEvent // events with e.y() == `y`.
 }
 
 func (sl scanLine) toRectList() rectList {
@@ -608,11 +613,13 @@ func (sl scanLine) String() string {
 	return fmt.Sprintf("[y=%.1f %d %s]", sl.y, len(sl.events), strings.Join(parts, " "))
 }
 
+// scanEvent represents leaving or entering a rectangle while scanning down a page.
 type scanEvent struct {
 	idRect
-	enter bool
+	enter bool  // true if entering, false if leaving `idRect`.
 }
 
+// idRect is a numbered rectangle. The number is used to find rectangles.
 type idRect struct {
 	model.PdfRectangle
 	id int
@@ -634,7 +641,7 @@ func scanPage(pageBound model.PdfRectangle, pageGaps rectList) rectList {
 	}
 	ss := newScanState(pageBound)
 	slines := ss.gapsToScanLines(pageGaps)
-	common.Log.Info("scanPage %s", ss)
+	common.Log.Info("@@ scanPage: pageBound=%s", showBBox(pageBound))
 	ss.validate()
 	for i, sl := range slines {
 		common.Log.Info("%2d **********  sl=%s", i, sl)
@@ -701,7 +708,7 @@ func (ss *scanState) open(sl scanLine) {
 	// save current columns that gaps intersect
 	// intersect columns with inverse of gaps
 	// create new columns
-	common.Log.Info("sl.opened()=%s", sl.opened())
+	common.Log.Info("sl.opened()=%s y=%.1f", sl.opened(), sl.y)
 	if len(sl.opened()) == 0 {
 		return
 	}
@@ -763,17 +770,8 @@ func differentElements(a, b []idRect) []idRect {
 	return diff
 }
 
-// intersectingElements returns the intesection of `columns` and `gaps` along the x-axis at y=`y`.
+// intersectingElements returns the inteserction of `columns` and `gaps` along the x-axis at y=`y`.
 func (ss *scanState) intersectingElements(columns, gaps []idRect, y float64) []idRect {
-	// {
-	// 	g0 := gaps[0]
-	// 	for _, g := range gaps[1:] {
-	// 		if g.Llx <= g0.Urx {
-	// 			panic(fmt.Errorf("overlapping\n\tg0=%s\n\t g=%s", g0, g))
-	// 		}
-	// 		g0 = g
-	// 	}
-	// }
 	for _, g := range gaps {
 		for _, c := range columns {
 			if overlappedX(c.PdfRectangle, g.PdfRectangle) {
@@ -782,7 +780,7 @@ func (ss *scanState) intersectingElements(columns, gaps []idRect, y float64) []i
 		}
 	}
 	var columns1 []idRect
-	for i, c := range columns {
+	for _, c := range columns {
 		olap := overlappedXElements(c, gaps)
 		if len(olap) == 0 {
 			idr := ss.newIDRect(c.PdfRectangle)
@@ -790,7 +788,7 @@ func (ss *scanState) intersectingElements(columns, gaps []idRect, y float64) []i
 			common.Log.Info("columns1=%d idr=%s", len(columns1), idr)
 			continue
 		}
-		common.Log.Info("## %3d of %d: %s olap=%d %s", i, len(columns), c, len(olap), olap[0])
+		// common.Log.Info("## %3d of %d: %s olap=%d %s", i, len(columns), c, len(olap), olap[0])
 		if olap[0].Llx <= c.Llx {
 			c.Llx = olap[0].Urx
 			olap = olap[1:]
@@ -814,8 +812,8 @@ func (ss *scanState) intersectingElements(columns, gaps []idRect, y float64) []i
 			continue
 		}
 		x0 := c.Llx
-		for j, g := range olap {
-			common.Log.Info("#@ %3d of %d: %s", j, len(olap), g)
+		for _, g := range olap {
+			// common.Log.Info("#@ %3d of %d: %s", j, len(olap), g)
 			x1 := g.Llx
 			if x1 <= x0 {
 				continue // overlap
@@ -831,7 +829,7 @@ func (ss *scanState) intersectingElements(columns, gaps []idRect, y float64) []i
 		r := model.PdfRectangle{Llx: x0, Urx: x1, Ury: y}
 		idr := ss.newIDRect(r)
 		columns1 = append(columns1, idr)
-		common.Log.Info("columns1=%d idr=%s", len(columns1), idr)
+		common.Log.Info("new idr=%s columns1=%d ", idr, len(columns1))
 	}
 	return columns1
 }
@@ -884,8 +882,9 @@ func (ss *scanState) gapsToScanLines(pageGaps rectList) []scanLine {
 	e := events[0]
 	sl := scanLine{y: e.y(), events: []scanEvent{e}}
 	sl.checkOverlaps()
+	common.Log.Info("! %2d of %d: %s", 1, len(events), e)
 	for i, e := range events[1:] {
-		common.Log.Info("! %2d of %d: %s", i+1, len(events), e)
+		common.Log.Info("! %2d of %d: %s", i+2, len(events), e)
 		if e.y() > sl.y-1.0 {
 			sl.events = append(sl.events, e)
 			// sl.checkOverlaps()
@@ -1198,7 +1197,7 @@ func saveMarkedupPDF(params saveMarkedupParams) error {
 
 			dx := 10.0
 			dy := 10.0
-			if markupType == "marks" || len(params.shownMarkups) <= 2 {
+			if markupType == "marks" || len(params.shownMarkups) <= 1 {
 				dx = 0.0
 				dy = 0.0
 			}
