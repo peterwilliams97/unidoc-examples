@@ -51,12 +51,8 @@ const (
 	// environment variables,  where UNIPDF_LICENSE_PATH points to the file containing the license
 	// key and the UNIPDF_CUSTOMER_NAME the explicitly specified customer name to which the key is
 	// licensed.
-	uniDocLicenseKey = `-----BEGIN UNIDOC LICENSE KEY-----
-eyJsaWNlbnNlX2lkIjoiYjZjNTllZGEtMGM5NC00MjMzLTYxZmMtYzE5NjdkODgwY2QzIiwiY3VzdG9tZXJfaWQiOiJjZDNlZmJiZi05NDIyLTQ0ZjEtNTcxYy05NzgyMmNkYWFlMjEiLCJjdXN0b21lcl9uYW1lIjoiUGFwZXJDdXQgU29mdHdhcmUgSW50ZXJuYXRpb25hbCBQdHkgTHRkIiwiY3VzdG9tZXJfZW1haWwiOiJhY2NvdW50c0BwYXBlcmN1dC5jb20iLCJ0aWVyIjoiYnVzaW5lc3MiLCJjcmVhdGVkX2F0IjoxNTYxNjY1NjI5LCJleHBpcmVzX2F0IjoxNTkzMzAyMzk5LCJjcmVhdG9yX25hbWUiOiJVbmlEb2MgU3VwcG9ydCIsImNyZWF0b3JfZW1haWwiOiJzdXBwb3J0QHVuaWRvYy5pbyIsInVuaXBkZiI6dHJ1ZSwidW5pb2ZmaWNlIjpmYWxzZSwidHJpYWwiOmZhbHNlfQ==
-+
-jqfCPGZxtGEQ1hFui9dQLB9iPUhS715HPRW30eYpfiDKaM3SEpThz/GCLNj4dO3aZmE9UHF+ir4BRnOIA8lymRL8Y+690JBzJFfdE0nIqZGQ+NwrU3bRqkND94XWRE+eE+hkY6DnjNxr7DwyPnKyYMppVwHelMKI5s8GJZObVYbcXoDQOC0R5Z5ckL6BemmkE7I6Xna2jAVAl+YSgsoz6fyA6je71A2kqZmoYm5U1g7NfQQpkLZpClvC97tkIH7qeaf8xQNCN9hyMo0uYAFZ/pUJfzEjZDtWHqcYBIAdoKvE/IL7OcUZKqSGvKgmyvkvWeJqw4iw9p9nh8pDNc5nfQ==
------END UNIDOC LICENSE KEY-----`
-	companyName = "PaperCut Software International Pty Ltd"
+	uniDocLicenseKey = ``
+	companyName      = ""
 )
 
 var saveParams saveMarkedupParams
@@ -581,7 +577,7 @@ func (ss scanState) String() string {
 	sort.Ints(ids)
 	lines = append(lines, fmt.Sprintf("--- gapStack=%d", len(ss.gapStack)))
 	for _, id := range ids {
-		lines = append(lines, fmt.Sprintf("%4d: %v", id, ss.gapStack[id]))
+		lines = append(lines, fmt.Sprintf("%4d: %+v", id, ss.gapStack[id]))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -616,7 +612,7 @@ func (sl scanLine) String() string {
 // scanEvent represents leaving or entering a rectangle while scanning down a page.
 type scanEvent struct {
 	idRect
-	enter bool  // true if entering, false if leaving `idRect`.
+	enter bool // true if entering, false if leaving `idRect`.
 }
 
 // idRect is a numbered rectangle. The number is used to find rectangles.
@@ -627,7 +623,9 @@ type idRect struct {
 
 func (idr idRect) validate() {
 	if !validBBox(idr.PdfRectangle) {
-		panic(fmt.Errorf("idr.validate rect %s", idr))
+		w := idr.Urx - idr.Llx
+		h := idr.Ury - idr.Lly
+		panic(fmt.Errorf("idr.validate rect %s %g x %g", idr, w, h))
 	}
 	if idr.id <= 0 {
 		panic(fmt.Errorf("validate id %s", idr))
@@ -644,18 +642,35 @@ func scanPage(pageBound model.PdfRectangle, pageGaps rectList) rectList {
 	common.Log.Info("@@ scanPage: pageBound=%s", showBBox(pageBound))
 	ss.validate()
 	for i, sl := range slines {
-		common.Log.Info("%2d **********  sl=%s", i, sl)
-		if len(sl.opened()) > 0 {
-			ss.open(sl)
-			common.Log.Info("%2d OPENED %s", i, ss)
+		common.Log.Info("%2d **********  sl=%s", i, sl.String())
+		common.Log.Info("ss=%s", ss.String())
+		if len(sl.opening()) > 0 {
+			ss.processOpening(sl)
+			common.Log.Info("%2d OPENED %s", i, ss.String())
 			ss.validate()
 		}
-		if len(sl.closed()) > 0 {
-			ss.close(sl)
-			common.Log.Info("%2d CLOSED %s", i, ss)
+		if len(sl.closing()) > 0 {
+			ss.processClosing(sl)
+			common.Log.Info("%2d CLOSED %s", i, ss.String())
 			ss.validate()
 		}
 	}
+	// Close all the running columns.
+	common.Log.Info("FINAL CLOSER")
+	for i, idr := range ss.running {
+		common.Log.Info("running[%d]=%s", i, idr)
+		idr.Lly = pageBound.Lly
+		if idr.Ury-idr.Lly > 0 {
+			common.Log.Info("%4d completed[%d]=%s", i, len(ss.completed), idr)
+			idr.validate()
+			ss.completed = append(ss.completed, idr)
+			ss.validate()
+		}
+	}
+
+	sort.Slice(ss.completed, func(i, j int) bool {
+		return ss.completed[i].id < ss.completed[j].id
+	})
 	common.Log.Info("scanPage: pageGaps=%d pageBound=%5.1f", len(pageGaps), pageBound)
 	for i, c := range pageGaps {
 		fmt.Printf("%4d: %5.1f\n", i, c)
@@ -704,55 +719,66 @@ func (ss *scanState) getIDRect(id int) idRect {
 	return idr
 }
 
-func (ss *scanState) open(sl scanLine) {
+// processOpening updates `ss` for the opening events in `sl`.
+func (ss *scanState) processOpening(sl scanLine) {
 	// save current columns that gaps intersect
 	// intersect columns with inverse of gaps
 	// create new columns
-	common.Log.Info("sl.opened()=%s y=%.1f", sl.opened(), sl.y)
-	if len(sl.opened()) == 0 {
+	common.Log.Info("processOpening: sl.opening()=%s y=%.1f", sl.opening(), sl.y)
+	if len(sl.opening()) == 0 {
 		return
 	}
-	running := ss.intersectingElements(ss.running, sl.opened(), sl.y)
+	running := ss.intersectingElements(ss.running, sl.opening(), sl.y)
 	closed := differentElements(ss.running, running)
 	common.Log.Info("\n\tss.running=%s\n\t   running=%s\n\t    closed=%s", ss.running, running, closed)
-	for _, idr := range closed {
+	for i, idr := range closed {
+		common.Log.Info("closed[%d]=%s y=%.1f", i, idr, sl.y)
 		idr.validate()
-		if sl.y <= idr.Ury {
+		if sl.y >= idr.Ury {
+			// panic("y")
 			continue
 		}
 		idr.Lly = sl.y
 		idr.validate()
+		common.Log.Info("completed[%d]=%s y=%.1ff", len(ss.completed), idr, sl.y)
 		ss.completed = append(ss.completed, idr)
 	}
 	ss.running = running
 }
 
-func (ss *scanState) close(sl scanLine) {
+// processClosing updates `ss` for the closing events in `sl`.
+func (ss *scanState) processClosing(sl scanLine) {
 	// complete running. added to compleleted list
 	// pop old columns
-	common.Log.Info("sl.closed()=%s", sl.closed())
-	if len(sl.closed()) == 0 {
+	common.Log.Info("processClosing: sl.closing()=%s y=%.2f", sl.closing(), sl.y)
+	if len(sl.closing()) == 0 {
 		return
 	}
-	oldRunning := ss.popIntersect(sl.closed())
-	closed := differentElements(ss.running, oldRunning)
-	common.Log.Info("\n\tss.running=%s\n\toldRunning=%s\n\t    closed=%s", ss.running, oldRunning, closed)
+	spectators, players := splitXIntersection(ss.running, sl.closing())
+	oldRunning := ss.popIntersect(players, sl.closing())
+	closed := differentElements(players, oldRunning)
+	common.Log.Info("\n\tspectators=%s"+
+		"\n\t   players=%s"+
+		"\n\t oldRunning=%s"+
+		"\n\t     closed=%s", spectators, players, oldRunning, closed)
 	for i, idr := range closed {
 		if sl.y == idr.Ury {
 			panic(fmt.Errorf("height: i=%d, idr=%s", i, idr))
 		}
 		idr.Lly = sl.y
 		ss.completed = append(ss.completed, idr)
+		delete(ss.gapStack, idr.id)
 		ss.validate()
 	}
-	running := make([]idRect, len(oldRunning))
-	for i, idr := range oldRunning {
+	running := spectators
+	for _, idr := range oldRunning {
 		r := idr.PdfRectangle
 		r.Ury = sl.y
-		running[i] = ss.newIDRect(r)
+		running = append(running, ss.newIDRect(r))
 	}
-
+	sortX(running, false)
 	ss.running = running
+
 }
 
 // differentElements returns the elements in `a` that aren't in `b`.
@@ -770,8 +796,44 @@ func differentElements(a, b []idRect) []idRect {
 	return diff
 }
 
-// intersectingElements returns the inteserction of `columns` and `gaps` along the x-axis at y=`y`.
+func idRectsToRectList(gaps []idRect) rectList {
+	rl := make(rectList, len(gaps))
+	for i, g := range gaps {
+		rl[i] = g.PdfRectangle
+	}
+	return rl
+}
+
+type xEvent struct {
+	x   float64
+	ll  bool
+	gap bool
+	i   int
+}
+
+func (e xEvent) String() string {
+	pos := "ur"
+	if e.ll {
+		pos = "LL"
+	}
+	typ := "COL"
+	if e.gap {
+		typ = "gap"
+	}
+	return fmt.Sprintf("<%5.1f %s %s %d>", e.x, pos, typ, e.i)
+}
+
+// perforate returns `columns` perforated by `gaps`.
 func (ss *scanState) intersectingElements(columns, gaps []idRect, y float64) []idRect {
+	if len(gaps) == 0 {
+		return columns
+	}
+	bound := ss.pageBound
+	sortX(columns, true)
+	sortX(gaps, true)
+	checkOverlaps(columns)
+	checkOverlaps(gaps)
+
 	for _, g := range gaps {
 		for _, c := range columns {
 			if overlappedX(c.PdfRectangle, g.PdfRectangle) {
@@ -779,60 +841,171 @@ func (ss *scanState) intersectingElements(columns, gaps []idRect, y float64) []i
 			}
 		}
 	}
-	var columns1 []idRect
-	for _, c := range columns {
-		olap := overlappedXElements(c, gaps)
-		if len(olap) == 0 {
-			idr := ss.newIDRect(c.PdfRectangle)
-			columns1 = append(columns1, idr)
-			common.Log.Info("columns1=%d idr=%s", len(columns1), idr)
-			continue
-		}
-		// common.Log.Info("## %3d of %d: %s olap=%d %s", i, len(columns), c, len(olap), olap[0])
-		if olap[0].Llx <= c.Llx {
-			c.Llx = olap[0].Urx
-			olap = olap[1:]
-		}
-		if len(olap) == 0 {
-			c.Ury = y
-			idr := ss.newIDRect(c.PdfRectangle)
-			columns1 = append(columns1, idr)
-			common.Log.Info("columns1=%d idr=%s", len(columns1), idr)
-			continue
-		}
-		if olap[len(olap)-1].Urx >= c.Urx {
-			c.Urx = olap[len(olap)-1].Llx
-			olap = olap[:len(olap)-1]
-		}
-		if len(olap) == 0 {
-			c.Ury = y
-			idr := ss.newIDRect(c.PdfRectangle)
-			columns1 = append(columns1, idr)
-			common.Log.Info("columns1=%d idr=%s", len(columns1), idr)
-			continue
-		}
-		x0 := c.Llx
-		for _, g := range olap {
-			// common.Log.Info("#@ %3d of %d: %s", j, len(olap), g)
-			x1 := g.Llx
-			if x1 <= x0 {
-				continue // overlap
-				panic(fmt.Errorf("x0=%.1f x1=%.1f", x0, x1))
-			}
-			r := model.PdfRectangle{Llx: x0, Urx: x1, Ury: y}
-			idr := ss.newIDRect(r)
-			columns1 = append(columns1, idr)
-			common.Log.Debug("columns1=%d idr=%s", len(columns1), idr)
-			x0 = g.Urx
-		}
-		x1 := c.Urx
-		r := model.PdfRectangle{Llx: x0, Urx: x1, Ury: y}
-		idr := ss.newIDRect(r)
-		columns1 = append(columns1, idr)
-		common.Log.Info("new idr=%s columns1=%d ", idr, len(columns1))
+
+	events := make([]xEvent, 0, 2*(len(columns)+len(gaps)))
+	for i, r := range columns {
+		eLl := xEvent{x: r.Llx, ll: true, gap: false, i: i}
+		eUr := xEvent{x: r.Urx, ll: false, gap: false, i: i}
+		events = append(events, eLl, eUr)
 	}
+	for i, r := range gaps {
+		eLl := xEvent{x: r.Llx, ll: true, gap: true, i: i}
+		eUr := xEvent{x: r.Urx, ll: false, gap: true, i: i}
+		events = append(events, eLl, eUr)
+	}
+
+	sort.Slice(events, func(i, j int) bool {
+		ei, ej := events[i], events[j]
+		xi, xj := ei.x, ej.x
+		if xi != xj {
+			return xi < xj
+		}
+		return ei.i < ej.i
+	})
+
+	var columns1 []idRect
+	add := func(llx, urx float64, ci int) {
+		kind := "existing"
+		if urx > llx {
+			var idr idRect
+			if ci >= 0 {
+				idr = columns[ci]
+			} else {
+				r := model.PdfRectangle{Llx: llx, Urx: urx, Ury: y}
+				idr = ss.newIDRect(r)
+				kind = "NEW"
+			}
+			common.Log.Debug("\tcolumns1[%d]=%s %s", len(columns1), idr, kind)
+			columns1 = append(columns1, idr)
+		}
+	}
+
+	common.Log.Debug("intersectingElements y=%.1f", y)
+	llx := bound.Llx
+	ci := -1
+	for i, e := range events {
+		common.Log.Debug("%3d: llx=%5.1f %s", i, llx, e)
+		if e.gap {
+			if e.ll {
+				add(llx, e.x, -1) //  g.Llx)
+			} else {
+				llx = e.x // g.Urx
+			}
+			ci = -1
+		} else { // column
+			if e.ll {
+				llx = e.x
+				ci = e.i
+			} else {
+				add(llx, e.x, ci)
+				llx = e.x
+				ci = -1
+			}
+		}
+		common.Log.Debug("%3d: llx=%5.1f", i, llx)
+	}
+	add(llx, bound.Urx, ci)
+
+	common.Log.Debug("intersectingElements columns=%d", len(columns))
+	for i, idr := range columns {
+		fmt.Printf("%4d: %s\n", i, idr)
+	}
+	common.Log.Debug("intersectingElements gaps=%d", len(gaps))
+	// for i, idr := range gaps {
+	// 	fmt.Printf("%4d: %s\n", i, idr)
+	// }
+	common.Log.Debug("intersectingElements columns1=%d", len(columns1))
+	// for i, idr := range columns1 {
+	// 	fmt.Printf("%4d: %s\n", i, idr)
+	// }
+
+	sortX(columns1, true)
+	checkOverlaps(columns1)
 	return columns1
 }
+
+func sortX(rl []idRect, alreadySorted bool) {
+	less := func(i, j int) bool {
+		xi, xj := rl[i].Llx, rl[j].Llx
+		if xi != xj {
+			return xi < xj
+		}
+		return rl[i].Urx < rl[j].Urx
+	}
+	if alreadySorted {
+		if !sort.SliceIsSorted(rl, less) {
+			panic("sortX")
+		}
+	} else {
+		sort.Slice(rl, less)
+	}
+}
+
+// // intersectingElements returns the intersection of `columns` and `gaps` along the x-axis at y=`y`.
+// func (ss *scanState) intersectingElements(columns, gaps []idRect, y float64) []idRect {
+// 	inverse := perforate(ss.pageBound, idRectsToRectList(gaps))
+
+// 	for _, g := range gaps {
+// 		for _, c := range columns {
+// 			if overlappedX(c.PdfRectangle, g.PdfRectangle) {
+// 				ss.gapStack[g.id] = append(ss.gapStack[g.id], c.id)
+// 			}
+// 		}
+// 	}
+// 	var columns1 []idRect
+// 	// for _, c := range columns {
+// 	// 	olap := overlappedXElements(c, inverse)
+// 	// 	if len(olap) == 0 {
+// 	// 		idr := ss.newIDRect(c.PdfRectangle)
+// 	// 		columns1 = append(columns1, idr)
+// 	// 		common.Log.Info("columns1=%d idr=%s", len(columns1), idr)
+// 	// 		continue
+// 	// 	}
+// 	// 	// common.Log.Info("## %3d of %d: %s olap=%d %s", i, len(columns), c, len(olap), olap[0])
+// 	// 	if olap[0].Llx <= c.Llx {
+// 	// 		c.Llx = olap[0].Urx
+// 	// 		olap = olap[1:]
+// 	// 	}
+// 	// 	if len(olap) == 0 {
+// 	// 		c.Ury = y
+// 	// 		idr := ss.newIDRect(c.PdfRectangle)
+// 	// 		columns1 = append(columns1, idr)
+// 	// 		common.Log.Info("columns1=%d idr=%s", len(columns1), idr)
+// 	// 		continue
+// 	// 	}
+// 	// 	if olap[len(olap)-1].Urx >= c.Urx {
+// 	// 		c.Urx = olap[len(olap)-1].Llx
+// 	// 		olap = olap[:len(olap)-1]
+// 	// 	}
+// 	// 	if len(olap) == 0 {
+// 	// 		c.Ury = y
+// 	// 		idr := ss.newIDRect(c.PdfRectangle)
+// 	// 		columns1 = append(columns1, idr)
+// 	// 		common.Log.Info("columns1=%d idr=%s", len(columns1), idr)
+// 	// 		continue
+// 	// 	}
+// 	// 	x0 := c.Llx
+// 	// 	for _, g := range olap {
+// 	// 		// common.Log.Info("#@ %3d of %d: %s", j, len(olap), g)
+// 	// 		x1 := g.Llx
+// 	// 		if x1 <= x0 {
+// 	// 			continue // overlap
+// 	// 			panic(fmt.Errorf("x0=%.1f x1=%.1f", x0, x1))
+// 	// 		}
+// 	// 		r := model.PdfRectangle{Llx: x0, Urx: x1, Ury: y}
+// 	// 		idr := ss.newIDRect(r)
+// 	// 		columns1 = append(columns1, idr)
+// 	// 		common.Log.Debug("columns1=%d idr=%s", len(columns1), idr)
+// 	// 		x0 = g.Urx
+// 	// 	}
+// 	// 	x1 := c.Urx
+// 	// 	r := model.PdfRectangle{Llx: x0, Urx: x1, Ury: y}
+// 	// 	idr := ss.newIDRect(r)
+// 	// 	columns1 = append(columns1, idr)
+// 	// 	common.Log.Info("new idr=%s columns1=%d ", idr, len(columns1))
+// 	// }
+// 	return columns1
+// }
 
 // overlappedXElements returns the elements of `gaps` that overlap `col` on the x-axis.
 func overlappedXElements(col idRect, gaps []idRect) []idRect {
@@ -844,14 +1017,30 @@ func overlappedXElements(col idRect, gaps []idRect) []idRect {
 	}
 	return olap
 }
+func splitXIntersection(columns, gaps []idRect) (spectators, players []idRect) {
+	common.Log.Info("splitXIntersection: gaps=%v -----------", gaps)
+	for i, c := range columns {
+		if len(overlappedXElements(c, gaps)) == 0 {
+			common.Log.Info("! %4d: c=%s", i, c)
+			spectators = append(spectators, c)
+		} else {
+			common.Log.Info("~ %4d: c=%s", i, c)
+			players = append(players, c)
+		}
+	}
+	return
+}
 
 // popIntersect returns the columns that were split by `gaps`. This function is used to close gaps
 // that were opened by intersect.
-func (ss *scanState) popIntersect(gaps []idRect) []idRect {
+func (ss *scanState) popIntersect(columns, gaps []idRect) []idRect {
+	common.Log.Info("popIntersect: gaps=%v -----------", gaps)
 	var columns1 []idRect
-	for _, g := range gaps {
+	for i, g := range gaps {
 		cols := ss.gapStack[g.id]
-		for _, cid := range cols {
+		common.Log.Info("@ %4d: g=%s", i, g)
+		for j, cid := range cols {
+			common.Log.Info(" %8d: c=%s", j, ss.getIDRect(cid))
 			columns1 = append(columns1, ss.getIDRect(cid))
 		}
 	}
@@ -925,7 +1114,8 @@ func (sl scanLine) columnsScan(pageBound model.PdfRectangle, enter bool) (
 	return opened, closed
 }
 
-func (sl scanLine) opened() []idRect {
+// opening returns the elements of `sl` that are opening.
+func (sl scanLine) opening() []idRect {
 	var idrs []idRect
 	for _, e := range sl.events {
 		if e.enter {
@@ -936,7 +1126,8 @@ func (sl scanLine) opened() []idRect {
 	return idrs
 }
 
-func (sl scanLine) closed() []idRect {
+// closing returns the elements of `sl` that are closing.
+func (sl scanLine) closing() []idRect {
 	var idrs []idRect
 	for _, e := range sl.events {
 		if !e.enter {
@@ -948,7 +1139,7 @@ func (sl scanLine) closed() []idRect {
 }
 
 func (idr idRect) String() string {
-	return fmt.Sprintf("(%4d %s)", idr.id, showBBox(idr.PdfRectangle))
+	return fmt.Sprintf("(%s %4d*)", showBBox(idr.PdfRectangle), idr.id)
 }
 
 func (e scanEvent) String() string {
@@ -1197,9 +1388,17 @@ func saveMarkedupPDF(params saveMarkedupParams) error {
 
 			dx := 10.0
 			dy := 10.0
-			if markupType == "marks" || len(params.shownMarkups) <= 1 {
+			if markupType == "marks" || len(params.shownMarkups) <= 2 {
 				dx = 0.0
 				dy = 0.0
+			}
+
+			if dx != 0.0 {
+				panic(fmt.Errorf("dx: markupType=%q params.shownMarkups=%d %q",
+					markupType, len(params.shownMarkups), params.shownMarkups))
+			}
+			if dy != 0.0 {
+				panic("dy")
 			}
 
 			common.Log.Info("markupType=%q dx=%.1f dy=%.1f markups[%d]=%d",
@@ -1925,19 +2124,13 @@ func (rl rectList) checkOverlaps() {
 		if r.Llx <= r0.Urx {
 			panic(fmt.Errorf("checkOverlaps:\n\tr0=%s\n\t r=%s", showBBox(r0), showBBox(r)))
 		}
+		r0 = r
 	}
 }
 
-func checkOverlaps(rl []idRect) {
-	if len(rl) == 0 {
-		return
-	}
-	r0 := rl[0]
-	for _, r := range rl[1:] {
-		if r.Llx <= r0.Urx {
-			panic(fmt.Errorf("checkOverlaps:\n\tr0=%s\n\t r=%s", r0, r))
-		}
-	}
+func checkOverlaps(idrs []idRect) {
+	rl := idRectsToRectList(idrs)
+	rl.checkOverlaps()
 }
 
 func (rl rectList) union() model.PdfRectangle {
