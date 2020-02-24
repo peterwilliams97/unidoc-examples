@@ -23,6 +23,7 @@ import (
 	"io/ioutil"
 	"math"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -109,6 +110,9 @@ func main() {
 
 	inPath := args[0]
 	outPath := args[1]
+	if strings.ToLower(filepath.Ext(outPath)) == ".pdf" {
+		panic(fmt.Errorf("output can't be PDF %q", outPath))
+	}
 	err := extractColumnText(inPath, outPath, firstPage, lastPage)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -282,7 +286,6 @@ func pageMarksToColumnText(pageNum int, words []extractor.TextMarkArray, pageBou
 	saveParams.markups[saveParams.curPage]["gaps"] = pageGaps
 
 	columns := scanPage(pageBound, pageGaps)
-
 	saveParams.markups[saveParams.curPage]["columns"] = columns
 
 	// columnText := getColumnText(lines, columnBBoxes)
@@ -534,6 +537,8 @@ func mergeXBboxes(bboxes rectList) rectList {
 	return merged
 }
 
+// overlappedX returns true if `r0` and `r1` overlap on the x-axis. !@#$ There is another version
+// of this!
 func overlappedX(r0, r1 model.PdfRectangle) bool {
 	return overlappedX01(r0, r1) || overlappedX01(r1, r0)
 }
@@ -649,11 +654,15 @@ func scanPage(pageBound model.PdfRectangle, pageGaps rectList) rectList {
 			common.Log.Info("%2d OPENED %s", i, ss.String())
 			ss.validate()
 		}
+		sortX(ss.running, true)
+		checkOverlaps(ss.running)
 		if len(sl.closing()) > 0 {
 			ss.processClosing(sl)
 			common.Log.Info("%2d CLOSED %s", i, ss.String())
 			ss.validate()
 		}
+		sortX(ss.running, true)
+		checkOverlaps(ss.running)
 	}
 	// Close all the running columns.
 	common.Log.Info("FINAL CLOSER")
@@ -743,6 +752,7 @@ func (ss *scanState) processOpening(sl scanLine) {
 		common.Log.Info("completed[%d]=%s y=%.1ff", len(ss.completed), idr, sl.y)
 		ss.completed = append(ss.completed, idr)
 	}
+	sortX(running, false)
 	ss.running = running
 }
 
@@ -757,10 +767,11 @@ func (ss *scanState) processClosing(sl scanLine) {
 	spectators, players := splitXIntersection(ss.running, sl.closing())
 	oldRunning := ss.popIntersect(players, sl.closing())
 	closed := differentElements(players, oldRunning)
-	common.Log.Info("\n\tspectators=%s"+
+	common.Log.Info("closing()=%s y=%.2f"+
+		"\n\tspectators=%s"+
 		"\n\t   players=%s"+
-		"\n\t oldRunning=%s"+
-		"\n\t     closed=%s", spectators, players, oldRunning, closed)
+		"\n\toldRunning=%s"+
+		"\n\t    closed=%s", sl.closing(), sl.y, spectators, players, oldRunning, closed)
 	for i, idr := range closed {
 		if sl.y == idr.Ury {
 			panic(fmt.Errorf("height: i=%d, idr=%s", i, idr))
@@ -771,14 +782,48 @@ func (ss *scanState) processClosing(sl scanLine) {
 		ss.validate()
 	}
 	running := spectators
-	for _, idr := range oldRunning {
-		r := idr.PdfRectangle
+	for i, idr := range oldRunning {
+		o, intsect := xIntersection(idr, players)
+		if !intsect {
+			continue
+		}
+		common.Log.Info("~~ %d:\n\tidr=%s\n\t  o=%s", i, idr, o)
+		r := o.PdfRectangle
 		r.Ury = sl.y
-		running = append(running, ss.newIDRect(r))
+		idr2 := ss.newIDRect(r)
+		running = append(running, idr2)
+		common.Log.Info("CREATE %s->%s", idr, idr2)
+		idr2.validate()
+		sortX(running, false)
+		checkOverlaps(running)
 	}
 	sortX(running, false)
+	checkOverlaps(running)
 	ss.running = running
+}
 
+func xIntersection(idr idRect, players []idRect) (idRect, bool) {
+	p := players[0]
+	l := p.Llx
+	r := p.Urx
+	for _, p := range players[:1] {
+		if p.Llx < l {
+			l = p.Llx
+		}
+		if p.Urx > r {
+			r = p.Urx
+		}
+	}
+	olap := idr
+	if l > olap.Llx {
+		olap.Llx = l
+	}
+	if r < olap.Urx {
+		olap.Urx = r
+	}
+	intsect := olap.Llx < olap.Urx
+	// common.Log.Info("xIntersection: l=%5.1f r=%5.1f\n\tplayers=%s\n\tidr=%s\n\t  o=%s", l, r, players, idr, olap)
+	return olap, intsect
 }
 
 // differentElements returns the elements in `a` that aren't in `b`.
@@ -809,6 +854,7 @@ type xEvent struct {
 	ll  bool
 	gap bool
 	i   int
+	idRect
 }
 
 func (e xEvent) String() string {
@@ -820,7 +866,7 @@ func (e xEvent) String() string {
 	if e.gap {
 		typ = "gap"
 	}
-	return fmt.Sprintf("<%5.1f %s %s %d>", e.x, pos, typ, e.i)
+	return fmt.Sprintf("<%5.1f %s %s %d %s>", e.x, pos, typ, e.i, e.idRect)
 }
 
 // perforate returns `columns` perforated by `gaps`.
@@ -844,13 +890,13 @@ func (ss *scanState) intersectingElements(columns, gaps []idRect, y float64) []i
 
 	events := make([]xEvent, 0, 2*(len(columns)+len(gaps)))
 	for i, r := range columns {
-		eLl := xEvent{x: r.Llx, ll: true, gap: false, i: i}
-		eUr := xEvent{x: r.Urx, ll: false, gap: false, i: i}
+		eLl := xEvent{idRect: r, x: r.Llx, gap: false, i: i, ll: true}
+		eUr := xEvent{idRect: r, x: r.Urx, gap: false, i: i, ll: false}
 		events = append(events, eLl, eUr)
 	}
 	for i, r := range gaps {
-		eLl := xEvent{x: r.Llx, ll: true, gap: true, i: i}
-		eUr := xEvent{x: r.Urx, ll: false, gap: true, i: i}
+		eLl := xEvent{idRect: r, x: r.Llx, gap: true, i: i, ll: true}
+		eUr := xEvent{idRect: r, x: r.Urx, gap: true, i: i, ll: false}
 		events = append(events, eLl, eUr)
 	}
 
@@ -864,7 +910,7 @@ func (ss *scanState) intersectingElements(columns, gaps []idRect, y float64) []i
 	})
 
 	var columns1 []idRect
-	add := func(llx, urx float64, ci int) {
+	add := func(llx, urx float64, ci int, whence string, e xEvent) {
 		kind := "existing"
 		if urx > llx {
 			var idr idRect
@@ -875,19 +921,24 @@ func (ss *scanState) intersectingElements(columns, gaps []idRect, y float64) []i
 				idr = ss.newIDRect(r)
 				kind = "NEW"
 			}
-			common.Log.Debug("\tcolumns1[%d]=%s %s", len(columns1), idr, kind)
+			common.Log.Info("\tcolumns1[%d]=%s %s %q %s", len(columns1), idr, kind, whence, e)
 			columns1 = append(columns1, idr)
 		}
+		sortX(columns1, true)
+		checkOverlaps(columns1)
 	}
 
-	common.Log.Debug("intersectingElements y=%.1f", y)
+	common.Log.Info("intersectingElements y=%.1f", y)
+	common.Log.Info("   gaps=%d\n\t%s", len(gaps), gaps)
+	common.Log.Info("columns=%d\n\t%s", len(columns), columns)
 	llx := bound.Llx
 	ci := -1
 	for i, e := range events {
-		common.Log.Debug("%3d: llx=%5.1f %s", i, llx, e)
+		common.Log.Info("%3d: llx=%5.1f %s", i, llx, e)
 		if e.gap {
 			if e.ll {
-				add(llx, e.x, -1) //  g.Llx)
+				add(llx, e.x, -1, "A", e) //  g.Llx)
+				llx = e.Urx
 			} else {
 				llx = e.x // g.Urx
 			}
@@ -897,27 +948,27 @@ func (ss *scanState) intersectingElements(columns, gaps []idRect, y float64) []i
 				llx = e.x
 				ci = e.i
 			} else {
-				add(llx, e.x, ci)
+				add(llx, e.x, ci, "B", e)
 				llx = e.x
 				ci = -1
 			}
 		}
-		common.Log.Debug("%3d: llx=%5.1f", i, llx)
+		common.Log.Info("%3d: llx=%5.1f", i, llx)
 	}
-	add(llx, bound.Urx, ci)
+	add(llx, bound.Urx, ci, "C", xEvent{})
 
-	common.Log.Debug("intersectingElements columns=%d", len(columns))
+	common.Log.Info("intersectingElements columns=%d", len(columns))
 	for i, idr := range columns {
 		fmt.Printf("%4d: %s\n", i, idr)
 	}
-	common.Log.Debug("intersectingElements gaps=%d", len(gaps))
-	// for i, idr := range gaps {
-	// 	fmt.Printf("%4d: %s\n", i, idr)
-	// }
-	common.Log.Debug("intersectingElements columns1=%d", len(columns1))
-	// for i, idr := range columns1 {
-	// 	fmt.Printf("%4d: %s\n", i, idr)
-	// }
+	common.Log.Info("intersectingElements gaps=%d", len(gaps))
+	for i, idr := range gaps {
+		fmt.Printf("%4d: %s\n", i, idr)
+	}
+	common.Log.Info("intersectingElements columns1=%d", len(columns1))
+	for i, idr := range columns1 {
+		fmt.Printf("%4d: %s\n", i, idr)
+	}
 
 	sortX(columns1, true)
 	checkOverlaps(columns1)
@@ -1017,6 +1068,7 @@ func overlappedXElements(col idRect, gaps []idRect) []idRect {
 	}
 	return olap
 }
+
 func splitXIntersection(columns, gaps []idRect) (spectators, players []idRect) {
 	common.Log.Info("splitXIntersection: gaps=%v -----------", gaps)
 	for i, c := range columns {
@@ -2121,16 +2173,24 @@ func (rl rectList) checkOverlaps() {
 	}
 	r0 := rl[0]
 	for _, r := range rl[1:] {
-		if r.Llx <= r0.Urx {
+		if r.Llx < r0.Urx {
 			panic(fmt.Errorf("checkOverlaps:\n\tr0=%s\n\t r=%s", showBBox(r0), showBBox(r)))
 		}
 		r0 = r
 	}
 }
 
-func checkOverlaps(idrs []idRect) {
-	rl := idRectsToRectList(idrs)
-	rl.checkOverlaps()
+func checkOverlaps(rl []idRect) {
+	if len(rl) == 0 {
+		return
+	}
+	r0 := rl[0]
+	for _, r := range rl[1:] {
+		if r.Llx < r0.Urx {
+			panic(fmt.Errorf("checkOverlaps:\n\tr0=%s\n\t r=%s", r0, r))
+		}
+		r0 = r
+	}
 }
 
 func (rl rectList) union() model.PdfRectangle {
