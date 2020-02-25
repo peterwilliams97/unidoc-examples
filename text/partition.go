@@ -52,8 +52,8 @@ const (
 	// environment variables,  where UNIPDF_LICENSE_PATH points to the file containing the license
 	// key and the UNIPDF_CUSTOMER_NAME the explicitly specified customer name to which the key is
 	// licensed.
-	uniDocLicenseKey = ``
-	companyName      = ""
+	uniDocLicenseKey = ```
+	companyName = ""
 )
 
 var saveParams saveMarkedupParams
@@ -97,18 +97,6 @@ func main() {
 	}
 	// testOverlappingGaps()
 
-	saveParams = saveMarkedupParams{shownMarkups: map[string]struct{}{}}
-	saveMarkupLwr := strings.ToLower(saveMarkup)
-	switch saveMarkupLwr {
-	case "marks", "words", "lines", "divs", "gaps", "columns":
-		saveParams.shownMarkups[saveMarkupLwr] = struct{}{}
-	case "all":
-		saveParams.shownMarkups["columns"] = struct{}{}
-		saveParams.shownMarkups["gaps"] = struct{}{}
-	default:
-		panic(fmt.Errorf("unknown markup type %q", saveMarkup))
-	}
-
 	if err := os.MkdirAll(outDir, 0777); err != nil {
 		panic(fmt.Errorf("Couldn't create outDir=%q err=%w", outDir, err))
 	}
@@ -130,7 +118,7 @@ func main() {
 			os.Exit(1)
 		}
 		// fmt.Fprintf(os.Stderr, " markupOutputPath=%q ", saveParams.markupOutputPath)
-		fmt.Fprintf(os.Stderr, "shownMarkups=%q\n", saveParams.shownMarkups)
+		// fmt.Fprintf(os.Stderr, "shownMarkups=%q\n", saveParams.shownMarkups)
 	}
 }
 
@@ -154,7 +142,7 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 		return fmt.Errorf("GetNumPages failed. %q err=%w", inPath, err)
 	}
 
-	saveParams.pdfReader = pdfReader
+	saveParams.inPath = inPath
 	saveParams.markups = map[int]map[string]rectList{}
 
 	var pageTexts []string
@@ -168,7 +156,7 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 
 	for pageNum := firstPage; pageNum <= lastPage; pageNum++ {
 		saveParams.curPage = pageNum
-		saveParams.markups[pageNum] = map[string]rectList{}
+		saveParams.markups[saveParams.curPage] = map[string]rectList{}
 
 		page, err := pdfReader.GetPage(pageNum)
 		if err != nil {
@@ -230,7 +218,7 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 		for i, mark := range textMarks.Elements() {
 			group[i] = mark.BBox
 		}
-		saveParams.markups[pageNum]["marks"] = group
+		// saveParams.markups[pageNum]["marks"] = group
 
 		outPageText, err := pageMarksToColumnText(pageNum, words, *mbox)
 		if err != nil {
@@ -247,7 +235,7 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 		return fmt.Errorf("failed to write outPath=%q err=%w", outPath, err)
 	}
 
-	for _, markupType := range []string{"gaps", "columns"} {
+	for _, markupType := range []string{"gaps", "marks", "columns"} {
 		err = saveMarkedupPDF(saveParams, inPath, markupType)
 		if err != nil {
 			return fmt.Errorf("failed to save marked up pdf: %w", err)
@@ -297,6 +285,7 @@ func pageMarksToColumnText(pageNum int, words []extractor.TextMarkArray, pageBou
 		common.Log.Info("%4d of %d: %s", i+1, len(pageGaps), showBBox(bbox))
 	}
 
+	fmt.Fprintf(os.Stderr, "gaps=%d\n", len(pageGaps))
 	saveParams.markups[saveParams.curPage]["gaps"] = pageGaps
 
 	columns := scanPage(pageBound, pageGaps)
@@ -1327,20 +1316,16 @@ func (w segmentationWord) String() string {
 }
 
 type saveMarkedupParams struct {
-	pdfReader    *model.PdfReader
-	markups      map[int]map[string]rectList
-	curPage      int
-	shownMarkups map[string]struct{}
-	markupDir    string
+	inPath    string
+	markups   map[int]map[string]rectList
+	curPage   int
+	markupDir string
 }
 
 // Saves a marked up PDF with the original with certain groups highlighted: marks, words, lines, columns.
 func saveMarkedupPDF(params saveMarkedupParams, inPath, markupType string) error {
-	if markupType != "" {
-		params.shownMarkups = map[string]struct{}{markupType: struct{}{}}
-	}
 	markupOutputPath := changePath(params.markupDir, inPath, markupType, ".pdf")
-	fmt.Fprintf(os.Stderr, "\n      markupType=%q\n", markupType)
+	fmt.Fprintf(os.Stderr, "      markupType=%q\n", markupType)
 	fmt.Fprintf(os.Stderr, "markupOutputPath=%q\n", markupOutputPath)
 
 	var pageNums []int
@@ -1352,11 +1337,22 @@ func saveMarkedupPDF(params saveMarkedupParams, inPath, markupType string) error
 		return nil
 	}
 
+	f, err := os.Open(params.inPath)
+	if err != nil {
+		return fmt.Errorf("Could not open %q err=%w", params.inPath, err)
+	}
+	defer f.Close()
+
+	pdfReader, err := model.NewPdfReaderLazy(f)
+	if err != nil {
+		return fmt.Errorf("NewPdfReaderLazy failed. %q err=%w", inPath, err)
+	}
+
 	// Make a new PDF creator.
 	c := creator.New()
 	for _, pageNum := range pageNums {
 		common.Log.Debug("Page %d - %d marks", pageNum, len(params.markups[pageNum]))
-		page, err := params.pdfReader.GetPage(pageNum)
+		page, err := pdfReader.GetPage(pageNum)
 		if err != nil {
 			return fmt.Errorf("saveOutputPdf: Could not get page pageNum=%d. err=%w", pageNum, err)
 		}
@@ -1371,79 +1367,54 @@ func saveMarkedupPDF(params saveMarkedupParams, inPath, markupType string) error
 		}
 		h := mediaBox.Ury
 
-		params.shownMarkups["page"] = struct{}{}
-
 		if err := c.AddPage(page); err != nil {
 			return fmt.Errorf("AddPage failed err=%w", err)
 		}
 
-		for _, markupType := range markupKeys(params.markups[pageNum]) {
-			group := params.markups[pageNum][markupType]
-			if _, ok := params.shownMarkups[markupType]; !ok {
-				continue
+		group := params.markups[pageNum][markupType]
+		fmt.Fprintf(os.Stderr, "^^ pageNum=%d markupType=%q group=%d\n",
+			pageNum, markupType, len(group))
+
+		dx := 0.0
+		dy := 0.0
+
+		common.Log.Info("markupType=%q dx=%.1f dy=%.1f pageNum=%d",
+			markupType, dx, dy, pageNum)
+
+		width := widths[markupType]
+		borderColor := creator.ColorRGBFromHex(colors[markupType])
+		bgdColor := creator.ColorRGBFromHex(bkgnds[markupType])
+		common.Log.Debug("borderColor=%+q %.2f", colors[markupType], borderColor)
+		common.Log.Debug("   bgdColor=%+q %.2f", bkgnds[markupType], bgdColor)
+		for i, r := range group {
+			common.Log.Debug("Mark %d: %5.1f x,y,w,h=%5.1f %5.1f %5.1f %5.1f", i+1, r,
+				r.Llx, h-r.Lly, r.Urx-r.Llx, -(r.Ury - r.Lly))
+
+			llx := r.Llx + dx
+			urx := r.Urx - dx
+			lly := r.Lly + dy
+			ury := r.Ury - dy
+
+			w := width
+			rect := c.NewRectangle(llx+w, h-(lly+w), urx-llx-2*w, -(ury - lly - 2*w))
+			rect.SetBorderColor(bgdColor)
+			rect.SetBorderWidth(2.0 * width)
+			err = c.Draw(rect)
+			if err != nil {
+				return fmt.Errorf("Draw failed (background). pageNum=%d err=%w", pageNum, err)
 			}
-
-			dx := 10.0
-			dy := 10.0
-			if markupType == "marks" || len(params.shownMarkups) <= 2 {
-				dx = 0.0
-				dy = 0.0
-			}
-
-			if dx != 0.0 {
-				panic(fmt.Errorf("dx: markupType=%q params.shownMarkups=%d %q",
-					markupType, len(params.shownMarkups), params.shownMarkups))
-			}
-			if dy != 0.0 {
-				panic("dy")
-			}
-
-			common.Log.Info("markupType=%q dx=%.1f dy=%.1f markups[%d]=%d",
-				markupType, dx, dy, pageNum, len(params.shownMarkups))
-
-			width := widths[markupType]
-			borderColor := creator.ColorRGBFromHex(colors[markupType])
-			bgdColor := creator.ColorRGBFromHex(bkgnds[markupType])
-			common.Log.Debug("borderColor=%+q %.2f", colors[markupType], borderColor)
-			common.Log.Debug("   bgdColor=%+q %.2f", bkgnds[markupType], bgdColor)
-			for i, r := range group {
-				common.Log.Debug("Mark %d: %5.1f x,y,w,h=%5.1f %5.1f %5.1f %5.1f", i+1, r,
-					r.Llx, h-r.Lly, r.Urx-r.Llx, -(r.Ury - r.Lly))
-
-				if r.Urx-r.Llx < 20.0*dx {
-					dx = (r.Urx - r.Llx) / 20.0
-				}
-				if r.Ury-r.Lly < 20.0*dy {
-					dy = (r.Ury - r.Lly) / 20.0
-				}
-				if dx < 0 || dy < 0 {
-					panic("dx dy ")
-				}
-
-				llx := r.Llx + dx
-				urx := r.Urx - dx
-				lly := r.Lly + dy
-				ury := r.Ury - dy
-
-				rect := c.NewRectangle(llx, h-lly, urx-llx, -(ury - lly))
-				rect.SetBorderColor(bgdColor)
-				rect.SetBorderWidth(2.0 * width)
-				err = c.Draw(rect)
-				if err != nil {
-					return fmt.Errorf("Draw failed (background). pageNum=%d err=%w", pageNum, err)
-				}
-				rect = c.NewRectangle(llx, h-lly, urx-llx, -(ury - lly))
-				rect.SetBorderColor(borderColor)
-				rect.SetBorderWidth(1.0 * width)
-				err = c.Draw(rect)
-				if err != nil {
-					return fmt.Errorf("Draw failed (foreground).pageNum=%d err=%w", pageNum, err)
-				}
+			rect = c.NewRectangle(llx, h-lly, urx-llx, -(ury - lly))
+			rect.SetBorderColor(borderColor)
+			rect.SetBorderWidth(1.0 * width)
+			err = c.Draw(rect)
+			if err != nil {
+				return fmt.Errorf("Draw failed (foreground).pageNum=%d err=%w", pageNum, err)
 			}
 		}
+
 	}
 
-	c.SetOutlineTree(params.pdfReader.GetOutlineTree())
+	// c.SetOutlineTree(params.pdfReader.GetOutlineTree())
 	if err := c.WriteToFile(markupOutputPath); err != nil {
 		return fmt.Errorf("WriteToFile failed. err=%w", err)
 	}
@@ -1454,7 +1425,7 @@ func saveMarkedupPDF(params saveMarkedupParams, inPath, markupType string) error
 
 var (
 	widths = map[string]float64{
-		"marks":   0.05,
+		"marks":   0.5,
 		"words":   0.1,
 		"lines":   0.2,
 		"divs":    0.6,
@@ -1467,7 +1438,7 @@ var (
 		"words":   "#ff0000",
 		"lines":   "#f0f000",
 		"divs":    "#ffff00",
-		"gaps":    "#0000ff",
+		"gaps":    "#ff0000",
 		"columns": "#00ff00",
 		"page":    "#00aabb",
 	}
@@ -1476,7 +1447,7 @@ var (
 		"words":   "#ff00ff",
 		"lines":   "#00afaf",
 		"divs":    "#0000ff",
-		"gaps":    "#ffff00",
+		"gaps":    "#00ffff",
 		"columns": "#ff00ff",
 		"page":    "#ff0000",
 	}
@@ -1593,16 +1564,24 @@ func obstacleCover(bound model.PdfRectangle, obstacles rectList,
 	if len(obstacles) == 0 {
 		return nil
 	}
+	W = bound.Width()
+	H = bound.Height()
 	pq := newPriorityQueue()
 	partel := newPartElt(bound, obstacles)
 	pq.myPush(partel)
 	var cover rectList
+
+	var tos rectList
+	var tosP []partElt
 
 	// var snaps []string
 	for cnt := 0; pq.Len() > 0; cnt++ {
 		partel := pq.myPop()
 		common.Log.Info("npush=%3d npop=%3d cover=%3d cnt=%3d\n\tpartel=%s\n\t    pq=%s",
 			pq.npush, pq.npop, len(cover), cnt, partel.String(), pq.String())
+
+		tos = append(tos, partel.bound)
+		tosP = append(tosP, *partel)
 
 		if cnt > 100000 {
 			panic("cnt")
@@ -1618,6 +1597,7 @@ func obstacleCover(bound model.PdfRectangle, obstacles rectList,
 
 		// Got an empty rectangle?
 		if len(partel.obstacles) == 0 {
+			common.Log.Info("EMPTY: partel=%s cover=%d", partel, len(cover))
 			if !intersectionSignificant(partel.bound, cover, maxoverlap) {
 				partel = partel.extend(bound, obstacles)
 				cover = append(cover, partel.bound)
@@ -1641,11 +1621,22 @@ func obstacleCover(bound model.PdfRectangle, obstacles rectList,
 		}
 	}
 
+	n := len(tos)
+	if n > 30 {
+		n = 30
+	}
+	saveParams.markups[saveParams.curPage]["marks"] = tos[:n]
+	common.Log.Info("tos=%d", len(tosP))
+	for i, r := range tosP {
+		// fmt.Printf("%4d: %s %5.3f\n", i, showBBox(r), partEltQuality(r))
+		fmt.Printf("%4d: %s\n", i, r.String())
+	}
+
 	// common.Log.Info("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 	// for i, s := range snaps {
 	// 	fmt.Printf("%6d: %s\n", i, s)
 	// }
-	cover = removeNonSeparating(bound, cover, obstacles)
+	// cover = removeNonSeparating(bound, cover, obstacles) !@#$
 	cover = absorbCover(bound, cover, obstacles)
 	return cover
 }
@@ -1823,10 +1814,12 @@ func accept(bound model.PdfRectangle) bool {
 	return false
 }
 
+var H, W float64
+
 func partEltQuality(r model.PdfRectangle) float64 {
-	x := 0.1*r.Height() + r.Width()
-	y := r.Height() + 0.1*r.Width()
-	return math.Max(0.5*x, y)
+	x := (0.1*r.Height()/H + r.Width()/W) / 1.1
+	y := (r.Height()/H + 0.1*r.Width()/W) / 1.1
+	return math.Max(0.01*x, y)
 }
 
 func partEltSig(r model.PdfRectangle) float64 {
@@ -2034,11 +2027,12 @@ func (partel *partElt) extend(bound model.PdfRectangle, obstacles rectList) *par
 }
 
 func (partel *partElt) String() string {
-	extra := ""
+	extra := ">"
 	if len(partel.obstacles) == 0 {
-		extra = " LEAF!"
+		extra = " |LEAF!>"
 	}
-	return fmt.Sprintf("<%d %s%s>", len(partel.obstacles), showBBox(partel.bound), extra)
+	return fmt.Sprintf("<%s %5.3f %3d%s",
+		showBBox(partel.bound), partel.quality, len(partel.obstacles), extra)
 }
 
 // newPriorityQueue returns a PriorityQueue containing `items`.
@@ -2209,7 +2203,10 @@ func intersectionSignificant(bound model.PdfRectangle, cover rectList, maxoverla
 		overlap, bound, besti, cover[besti])
 
 	for _, r := range cover {
-		if intersectionFraction(r, bound) > maxoverlap {
+		frac := intersectionFraction(r, bound)
+		// common.Log.Info("%d of %d intersectionFraction(%s, %s)=%g maxoverlap=%g", i, len(cover),
+		// 	showBBox(r), showBBox(bound), frac, maxoverlap)
+		if frac > maxoverlap {
 			return true
 		}
 	}
