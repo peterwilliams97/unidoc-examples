@@ -115,11 +115,10 @@ func main() {
 	if err := os.MkdirAll(markupDir, 0777); err != nil {
 		panic(fmt.Errorf("Couldn't create markupDir=%q err=%w", markupDir, err))
 	}
+	saveParams.markupDir = markupDir
 
 	// inPath := args[0]
 	for _, inPath := range args {
-
-		saveParams.markupOutputPath = changePath(markupDir, inPath, saveMarkupLwr, ".pdf")
 		outPath := changePath(outDir, filepath.Base(inPath), "", ".txt")
 		if strings.ToLower(filepath.Ext(outPath)) == ".pdf" {
 			panic(fmt.Errorf("output can't be PDF %q", outPath))
@@ -130,7 +129,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stderr, " markupOutputPath=%q ", saveParams.markupOutputPath)
+		// fmt.Fprintf(os.Stderr, " markupOutputPath=%q ", saveParams.markupOutputPath)
 		fmt.Fprintf(os.Stderr, "shownMarkups=%q\n", saveParams.shownMarkups)
 	}
 }
@@ -248,8 +247,8 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 		return fmt.Errorf("failed to write outPath=%q err=%w", outPath, err)
 	}
 
-	if len(saveParams.shownMarkups) != 0 {
-		err = saveMarkedupPDF(saveParams)
+	for _, markupType := range []string{"gaps", "columns"} {
+		err = saveMarkedupPDF(saveParams, inPath, markupType)
 		if err != nil {
 			return fmt.Errorf("failed to save marked up pdf: %w", err)
 		}
@@ -495,12 +494,15 @@ func lineBBox(line []extractor.TextMarkArray) model.PdfRectangle {
 
 func wordBBoxes(words []extractor.TextMarkArray) rectList {
 	bboxes := make(rectList, 0, len(words))
-	for _, w := range words {
-		b, ok := w.BBox()
+	for i, w := range words {
+		r, ok := w.BBox()
 		if !ok {
 			panic("bbox")
 		}
-		bboxes = append(bboxes, b)
+		if !validBBox(r) {
+			panic(fmt.Errorf("bad words[%d]=%s\n -- %s", i, w, showBBox(r)))
+		}
+		bboxes = append(bboxes, r)
 	}
 	return bboxes
 }
@@ -1167,6 +1169,7 @@ func (d division) validate() {
 		}
 	}
 }
+
 func (d division) String() string {
 	n := len(d.text)
 	// if n > 50 {
@@ -1298,7 +1301,17 @@ func (w segmentationWord) Elements() []extractor.TextMark {
 }
 
 func (w segmentationWord) BBox() (model.PdfRectangle, bool) {
-	return w.ma.BBox()
+	r, ok := w.ma.BBox()
+	if r.Llx > r.Urx {
+		r.Llx, r.Urx = r.Urx, r.Llx
+	}
+	if r.Lly > r.Ury {
+		r.Lly, r.Ury = r.Ury, r.Lly
+	}
+	if !validBBox(r) {
+		panic(fmt.Errorf("bad bbox: w=%s\n -- r=%s", w, showBBox(r)))
+	}
+	return r, ok
 }
 
 func (w segmentationWord) String() string {
@@ -1314,15 +1327,22 @@ func (w segmentationWord) String() string {
 }
 
 type saveMarkedupParams struct {
-	pdfReader        *model.PdfReader
-	markups          map[int]map[string]rectList
-	curPage          int
-	shownMarkups     map[string]struct{}
-	markupOutputPath string
+	pdfReader    *model.PdfReader
+	markups      map[int]map[string]rectList
+	curPage      int
+	shownMarkups map[string]struct{}
+	markupDir    string
 }
 
 // Saves a marked up PDF with the original with certain groups highlighted: marks, words, lines, columns.
-func saveMarkedupPDF(params saveMarkedupParams) error {
+func saveMarkedupPDF(params saveMarkedupParams, inPath, markupType string) error {
+	if markupType != "" {
+		params.shownMarkups = map[string]struct{}{markupType: struct{}{}}
+	}
+	markupOutputPath := changePath(params.markupDir, inPath, markupType, ".pdf")
+	fmt.Fprintf(os.Stderr, "\n      markupType=%q\n", markupType)
+	fmt.Fprintf(os.Stderr, "markupOutputPath=%q\n", markupOutputPath)
+
 	var pageNums []int
 	for pageNum := range params.markups {
 		pageNums = append(pageNums, pageNum)
@@ -1424,11 +1444,11 @@ func saveMarkedupPDF(params saveMarkedupParams) error {
 	}
 
 	c.SetOutlineTree(params.pdfReader.GetOutlineTree())
-	if err := c.WriteToFile(saveParams.markupOutputPath); err != nil {
+	if err := c.WriteToFile(markupOutputPath); err != nil {
 		return fmt.Errorf("WriteToFile failed. err=%w", err)
 	}
 
-	common.Log.Info("Saved marked-up PDF file: %q", saveParams.markupOutputPath)
+	common.Log.Info("Saved marked-up PDF file: %q", markupOutputPath)
 	return nil
 }
 
@@ -1561,8 +1581,8 @@ func whitespaceCover(pageBound model.PdfRectangle, words []extractor.TextMarkArr
 var sigObstacles map[float64]extractor.TextMarkArray
 
 // obstacleCover returns a best-effort maximum rectangle cover of the part of `bound` that
-// excludes  `obstacles`.
-// Based on "wo Geometric Algorithms for Layout Analysis" by Thomas Breuel
+// excludes `obstacles`.
+// Based on "Two Geometric Algorithms for Layout Analysis" by Thomas Breuel
 // https://www.researchgate.net/publication/2504221_Two_Geometric_Algorithms_for_Layout_Analysis
 func obstacleCover(bound model.PdfRectangle, obstacles rectList,
 	maxboxes int, maxoverlap, maxperim, frac float64, maxpops int) rectList {
@@ -1813,7 +1833,7 @@ func partEltSig(r model.PdfRectangle) float64 {
 	return r.Llx + r.Urx*1e3 + r.Lly*1e6 + r.Ury*1e9
 }
 
-// subdivide subdivides `bound` into up to 4 rectangles that don't intersect with `obstacles`.
+// subdivide subdivides `bound` in to up to 4 rectangles that don't intersect with `obstacles`.
 func subdivide(bound model.PdfRectangle, obstacles rectList, maxperim, frac float64) rectList {
 	subdivisions := make(rectList, 0, 4)
 	pivot, err := selectPivot(bound, obstacles, maxperim, frac)
@@ -1821,7 +1841,8 @@ func subdivide(bound model.PdfRectangle, obstacles rectList, maxperim, frac floa
 		panic(err)
 	}
 	if !validBBox(pivot) {
-		panic(fmt.Errorf("bad pivot=%5.1f", pivot))
+		panic(fmt.Errorf("bad pivot=%s bound=%s obstacles=%d",
+			showBBox(pivot), showBBox(bound), len(obstacles)))
 	}
 
 	pivotInt, ok := geometricIntersection(bound, pivot)
@@ -1938,6 +1959,11 @@ func selectPivot(bound model.PdfRectangle, obstacles rectList, maxperim, frac fl
 func newPartElt(bound model.PdfRectangle, obstacles rectList) *partElt {
 	if !validBBox(bound) {
 		panic(fmt.Errorf("bound=%s", showBBox(bound)))
+	}
+	for i, r := range obstacles {
+		if !validBBox(r) {
+			panic(fmt.Errorf("obstacles[%d]=%s", i, showBBox(r)))
+		}
 	}
 	return &partElt{
 		bound:     bound,
@@ -2099,6 +2125,14 @@ func (pq *PriorityQueue) Pop() interface{} {
 
 type rectList []model.PdfRectangle
 
+func (rl rectList) String() string {
+	parts := make([]string, len(rl))
+	for i, r := range rl {
+		parts[i] = fmt.Sprintf("\t%3d: %s", i, showBBox(r))
+	}
+	return fmt.Sprintf("{RECTLIST: %d elements=[\n%s]", len(rl), strings.Join(parts, "\n"))
+}
+
 func (rl rectList) checkOverlaps() {
 	if len(rl) == 0 {
 		return
@@ -2228,7 +2262,7 @@ func intersects(r0, r1 model.PdfRectangle) bool {
 }
 
 func validBBox(r model.PdfRectangle) bool {
-	return r.Llx < r.Urx && r.Lly < r.Ury
+	return r.Llx <= r.Urx && r.Lly <= r.Ury
 }
 
 func showBBox(r model.PdfRectangle) string {
