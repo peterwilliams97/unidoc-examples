@@ -20,8 +20,8 @@ type saveMarkedupParams struct {
 // Saves a marked up PDF with the original with certain groups highlighted: marks, words, lines, columns.
 func saveMarkedupPDF(params saveMarkedupParams, inPath, markupType string) error {
 	markupOutputPath := changePath(params.markupDir, inPath, markupType, ".pdf")
-	fmt.Fprintf(os.Stderr, "      markupType=%q\n", markupType)
-	fmt.Fprintf(os.Stderr, "markupOutputPath=%q\n", markupOutputPath)
+	// fmt.Fprintf(os.Stderr, "      markupType=%q\n", markupType)
+	// fmt.Fprintf(os.Stderr, "markupOutputPath=%q\n", markupOutputPath)
 
 	var pageNums []int
 	for pageNum := range params.markups {

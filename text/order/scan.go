@@ -73,26 +73,7 @@ type scanEvent struct {
 	enter bool // true if entering, false if leaving `idRect`.
 }
 
-// idRect is a numbered rectangle. The number is used to find rectangles.
-type idRect struct {
-	model.PdfRectangle
-	id int
-}
 
-func (idr idRect) String() string {
-	return fmt.Sprintf("(%s %4d*)", showBBox(idr.PdfRectangle), idr.id)
-}
-
-func (idr idRect) validate() {
-	if !validBBox(idr.PdfRectangle) {
-		w := idr.Urx - idr.Llx
-		h := idr.Ury - idr.Lly
-		panic(fmt.Errorf("idr.validate rect %s %g x %g", idr, w, h))
-	}
-	if idr.id <= 0 {
-		panic(fmt.Errorf("validate id %s", idr))
-	}
-}
 
 // scanPage returns the rectangles in `pageBound` that are separated by `pageGaps`.
 func scanPage(pageBound model.PdfRectangle, pageGaps rectList) rectList {
