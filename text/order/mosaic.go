@@ -99,87 +99,29 @@ func (m mosaic) intersectX(llx, urx float64) []int {
 		i0++
 	}
 	// common.Log.Info(">> i0=%d %s", i0, m.rects[m.orderUrx[i0]])
-	for i := i0; i < len(m.orderUrx); i++ {
-		o := m.orderUrx[i]
-		c := m.rects[o]
-		if c.Urx < llx {
-			panic("llx")
-		}
-	}
 
 	// i1 is the last element for which r.Llx ≤ `urx`.
 	// First i1 is highest r.Llx < urx
 	i1, _ := m.findLlx(urx)
 	// common.Log.Info("<< i1=%d", i1)
 	// if i1 < 0 {
-	// 	i1 = len(m.orderLlx) - 1
-	// }
-	// if i1 < 0 {
 	// 	common.Log.Info(">> i1=%d ", i1)
 	// } else {
 	// 	common.Log.Info(">> i1=%d %s", i1, m.rects[m.orderLlx[i1]])
 	// }
-	bad := false
-	for i := 0; i <= i1; i++ {
-		o := m.orderLlx[i]
-		c := m.rects[o]
-		if c.Llx > urx {
-			common.Log.Error("@@@@")
-			bad = true
-			break
-		}
-	}
-	if bad {
-		findVerbose = true
-		i1, _ := m.findLlx(urx)
-		common.Log.Info("<< i1=%d", i1)
-		if i1 < 0 {
-			i1 = len(m.orderLlx) - 1
-		}
-		common.Log.Info(">> i1=%d %s", i1, m.rects[m.orderLlx[i1]])
-		for i := 0; i <= i1; i++ {
-			o := m.orderLlx[i]
-			c := m.rects[o]
-			mark := ""
-			if c.Llx > urx {
-				mark = fmt.Sprintf(" BAD! llx=%5.2f urx=%5.2f", llx, urx)
-			}
-			fmt.Printf("i=%d o=%d c=%s %s\n", i, o, c, mark)
-		}
-
-		for i := 0; i <= i1; i++ {
-			o := m.orderLlx[i]
-			c := m.rects[o]
-			if c.Llx > urx {
-				common.Log.Error("i=%d o=%d c=%s", i, o, c)
-				panic("urx")
-			}
-		}
-	}
 
 	olap := sliceIntersection(m.orderUrx[i0:], m.orderLlx[:i1+1])
 	// m.show("  Left match", m.orderUrx[i0:])
 	// m.show(" Right match", m.orderLlx[:i1+1])
 	// m.show("Intersection", olap)
 
-	var r idRect
-	r.Llx = llx
-	r.Urx = urx
-	bad = false
-	for j, o := range olap {
-		c := m.rects[o]
-		if !intersectsX(r.PdfRectangle, c.PdfRectangle) {
-			bad = true
-			common.Log.Error("No x overlap: j=%d of %d\n\tr=%s\n\tc=%s", j, len(olap), r, c)
-			break
-		}
-	}
-	if bad {
+	{
+		var r idRect
+		r.Llx = llx
+		r.Urx = urx
 		for j, o := range olap {
 			c := m.rects[o]
-			fmt.Printf("%4d of %d: %s %5.2f - %5.2f\n", j, len(olap), c, llx, urx)
 			if !intersectsX(r.PdfRectangle, c.PdfRectangle) {
-				// common.Log.Error("\n\t     r=%s", m.rectString(r))
 				panic(fmt.Errorf("No x overlap: j=%d of %d\n\tr=%s\n\tc=%s", j, len(olap), r, c))
 			}
 		}
@@ -204,15 +146,25 @@ func (m mosaic) intersectY(lly, ury float64) []int {
 	// i1 is the last element for which r.Lly ≤ `ury`.
 	i1, _ := m.findLly(ury)
 	// common.Log.Info("<< i1=%d", i1)
-	if i1 < 0 {
-		i1 = len(m.orderLly) - 1
-	}
+
 	// common.Log.Info(">> i1=%d %s", i1, m.rects[m.orderLly[i1]])
 
 	olap := sliceIntersection(m.orderUry[i0:], m.orderLly[:i1+1])
 	// m.show("  Left match", m.orderUry[i0:])
 	// m.show(" Right match", m.orderLly[:i1+1])
 	// m.show("Intersection", olap)
+
+	{
+		var r idRect
+		r.Lly = lly
+		r.Ury = ury
+		for j, o := range olap {
+			c := m.rects[o]
+			if !intersectsY(r.PdfRectangle, c.PdfRectangle) {
+				panic(fmt.Errorf("No y overlap: j=%d of %d\n\tr=%s\n\tc=%s", j, len(olap), r, c))
+			}
+		}
+	}
 	return olap
 }
 

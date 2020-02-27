@@ -302,7 +302,15 @@ func horizontalIntersection(r0, r1 model.PdfRectangle) model.PdfRectangle {
 }
 
 func intersects(r0, r1 model.PdfRectangle) bool {
-	return r0.Urx > r1.Llx && r1.Urx > r0.Llx && r0.Ury > r1.Lly && r1.Ury > r0.Lly
+	return intersectsX(r0, r1) && intersectsY(r0, r1)
+}
+
+func intersectsX(r0, r1 model.PdfRectangle) bool {
+	return r0.Urx >= r1.Llx && r1.Urx >= r0.Llx
+}
+
+func intersectsY(r0, r1 model.PdfRectangle) bool {
+	return r0.Ury >= r1.Lly && r1.Ury >= r0.Lly
 }
 
 func validBBox(r model.PdfRectangle) bool {
