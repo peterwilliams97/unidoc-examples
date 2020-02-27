@@ -64,27 +64,28 @@ func testMosaic() {
 	// show("Lly", m.orderLly)
 	// show("Ury", m.orderUry)
 
-	start, end, delta := 0.0, 100.0, 20.0
-	// fmt.Println("findLLx ----------------")
-	// for x := start; x < end; x *= mul {
-	// 	i, r := m.findLlx(x)
-	// 	fmt.Printf("  x=%5.1f i=%d r=%s\n", x, i, r)
-	// }
-	// fmt.Println("findUrx ----------------")
-	// for x := start; x < end; x *= mul {
-	// 	i, r := m.findUrx(x)
-	// 	fmt.Printf("  x=%5.1f i=%d r=%s\n", x, i, r)
-	// }
-	// fmt.Println("findLLy ----------------")
-	// for x := start; x < end; x *= mul {
-	// 	i, r := m.findLly(x)
-	// 	fmt.Printf("  x=%5.1f i=%d r=%s\n", x, i, r)
-	// }
-	// fmt.Println("findUry ----------------")
-	// for x := start; x < end; x *= mul {
-	// 	i, r := m.findUry(x)
-	// 	fmt.Printf("  x=%5.1f i=%d r=%s\n", x, i, r)
-	// }
+	start, end, delta := 1.0, 100.0, 20.0
+	mul := math.Sqrt(delta)
+	common.Log.Info("findLLx ----------------")
+	for x := start; x < end; x *= mul {
+		i, o := m.findLlx(x)
+		fmt.Printf("  x=%5.1f i=%d o=%d r=%s\n", x, i, o, m.getRect(o))
+	}
+	common.Log.Info("findUrx ----------------")
+	for x := start; x < end; x *= mul {
+		i, o := m.findUrx(x)
+		fmt.Printf("  x=%5.1f i=%d o=%d r=%s\n", x, i, o, m.getRect(o))
+	}
+	common.Log.Info("findLLy ----------------")
+	for y := start; y < end; y *= mul {
+		i, o := m.findLly(y)
+		fmt.Printf("  y=%5.1f i=%d o=%d r=%s\n", y, i, o, m.getRect(o))
+	}
+	common.Log.Info("findUry ----------------")
+	for y := start; y < end; y *= mul {
+		i, o := m.findUry(y)
+		fmt.Printf("  y=%5.1f i=%d o=%d r=%s\n", y, i, o, m.getRect(o))
+	}
 
 	{
 		llx, urx := 100.0, 120.0
@@ -113,7 +114,7 @@ func testMosaic() {
 		llx := z
 		urx := z + end/5.0
 		name := fmt.Sprintf("intersectX x=%5.1f - %5.1f", llx, urx)
-		fmt.Printf("%40s ==========*========\n", name)
+		// fmt.Printf("%40s ==========*========\n", name)
 		olap := m.intersectX(llx, urx)
 		m.show(name, olap)
 		// panic("done")
@@ -124,21 +125,20 @@ func testMosaic() {
 		lly := z
 		ury := z + end/5.0
 		name := fmt.Sprintf("intersectY y=%5.1f - %5.1f", lly, ury)
-		fmt.Printf("%40s ==========*========\n", name)
+		// fmt.Printf("%40s ==========*========\n", name)
 		olap := m.intersectY(lly, ury)
 		m.show(name, olap)
-		// panic("done")
 		// panic("done")
 	}
 
 	fmt.Println("intersectXY -----------------------------------------------")
 	for z := start; z <= end; z += delta {
 		llx := z
-		urx := z + end/5.0
-		lly := z
-		ury := z + end/5.0
+		urx := llx + 2.0*delta
+		lly := end - z
+		ury := lly + delta
 		name := fmt.Sprintf("intersectXY x=%5.1f - %5.1f & y=%5.1f - %5.1f", llx, urx, lly, ury)
-		fmt.Printf(" %40s ==========*========\n", name)
+		// fmt.Printf(" %40s ==========*========\n", name)
 		olap := m.intersectXY(llx, urx, lly, ury)
 		m.show(name, olap)
 		// panic("done")
@@ -222,26 +222,31 @@ func (m mosaic) intersectY(lly, ury float64) []int {
 }
 
 // findLlx returns the index of the idRect with highest Llx ≤ `x`.
-func (m mosaic) findLlx(x float64) (int, idRect) {
-	return m.find(x, m.orderLlx, func(r idRect) float64 { return r.Llx })
+// Returns index into m.orderLlx, index into m.rects
+func (m mosaic) findLlx(x float64) (int, int) {
+	return m.find(x, m.orderLlx, selectLlx)
 }
 
 // findUrx returns the index of the idRect with highest Urx ≤ `x`.
-func (m mosaic) findUrx(x float64) (int, idRect) {
-	return m.find(x, m.orderUrx, func(r idRect) float64 { return r.Urx })
+func (m mosaic) findUrx(x float64) (int, int) {
+	return m.find(x, m.orderUrx, selectUrx)
 }
 
 // findLly returns the index of the idRect with highest Lly ≤ `x`.
-func (m mosaic) findLly(x float64) (int, idRect) {
-	return m.find(x, m.orderLly, func(r idRect) float64 { return r.Lly })
+func (m mosaic) findLly(x float64) (int, int) {
+	return m.find(x, m.orderLly, selectLly)
 }
 
 // findUry returns the index of the idRect with highest Ury ≤ `x`.
-func (m mosaic) findUry(x float64) (int, idRect) {
-	return m.find(x, m.orderUry, func(r idRect) float64 { return r.Ury })
+func (m mosaic) findUry(x float64) (int, int) {
+	return m.find(x, m.orderUry, selectUry)
 }
 
-func (m mosaic) find(x float64, order []int, selector func(idRect) float64) (int, idRect) {
+// find returns the highest index `idx` in `order` for which
+// `selector`(m.rects[`order`[idx]]) ≤ `x` .
+// The second return value is the index into m.rects
+// -1, -1 is returned if there is no match.
+func (m mosaic) find(x float64, order []int, selector func(idRect) float64) (int, int) {
 	idx := -1
 	for i, o := range order {
 		r := m.rects[o]
@@ -249,13 +254,16 @@ func (m mosaic) find(x float64, order []int, selector func(idRect) float64) (int
 			idx = i
 		}
 	}
-	var r idRect
-	if idx >= 0 {
-		o := order[idx]
-		r = m.rects[o]
+	if idx == -1 {
+		return -1, -1
 	}
-	return idx, r
+	return idx, order[idx]
 }
+
+func selectLlx(r idRect) float64 { return r.Llx }
+func selectUrx(r idRect) float64 { return r.Urx }
+func selectLly(r idRect) float64 { return r.Lly }
+func selectUry(r idRect) float64 { return r.Ury }
 
 func createMosaic(rl rectList) mosaic {
 	n := len(rl)
@@ -320,20 +328,28 @@ func checkIota(rects []idRect, order []int, selector func(idRect) float64) {
 
 // getRects returns the rectangles with indexes `order`.
 func (m mosaic) getRects(order []int) []idRect {
-	// common.Log.Info("getRects: order= %d %+v\n", len(order), order)
 	rects := make([]idRect, len(order))
 	for i, o := range order {
 		rects[i] = m.rects[o]
-		// fmt.Printf("-- rects[%d]=%d=%v\n", i, o, rects[i])
 	}
 	return rects
+}
+
+// getRects returns the rectangle with indexe `o`.
+func (m mosaic) getRect(o int) idRect {
+	if o < 0 {
+		return idRect{}
+	}
+	return m.rects[o]
 }
 
 func (m mosaic) show(name string, order []int) {
 	olap := order[:]
 	sort.Ints(olap)
 
-	fmt.Printf("## %s: %d %+v ----------\n", name, len(olap), olap)
+	// intersectXY x= 61.0 - 101.0 & y= 39.0 -  59.0: 3 [3 6 8]
+	s := fmt.Sprintf("%d %+v", len(olap), olap)
+	fmt.Printf("## %45s: %-20s ----------\n", name, s)
 	for i, o := range order {
 		r := m.rects[o]
 		fmt.Printf("%4d: %s\n", i, r)
