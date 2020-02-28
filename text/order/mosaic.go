@@ -12,6 +12,53 @@ import (
 	"github.com/unidoc/unipdf/v3/model"
 )
 
+/*
+ *  Heckbert's stack-based filling algorithm.
+
+ */
+
+func createMosaic(rl rectList) mosaic {
+	n := len(rl)
+	rects := make([]idRect, n)
+	orderLlx := make([]int, n)
+	orderUrx := make([]int, n)
+	orderLly := make([]int, n)
+	orderUry := make([]int, n)
+	for i, r := range rl {
+		rects[i] = idRect{id: i, PdfRectangle: r}
+		orderLlx[i] = i
+		orderUrx[i] = i
+		orderLly[i] = i
+		orderUry[i] = i
+	}
+	sortIota(rects, orderLlx, selectLlx)
+	sortIota(rects, orderUrx, selectUrx)
+	sortIota(rects, orderLly, selectLly)
+	sortIota(rects, orderUry, selectUry)
+
+	checkIota(rects, orderLlx, selectLlx)
+	checkIota(rects, orderUrx, selectUrx)
+	checkIota(rects, orderLly, selectLly)
+	checkIota(rects, orderUry, selectUry)
+
+	return mosaic{
+		rects:    rects,
+		orderLlx: orderLlx,
+		orderUrx: orderUrx,
+		orderLly: orderLly,
+		orderUry: orderUry,
+	}
+
+}
+
+type mosaic struct {
+	rects    []idRect
+	orderLlx []int
+	orderUrx []int
+	orderLly []int
+	orderUry []int
+}
+
 // idRect is a numbered rectangle. The number is used to find rectangles.
 type idRect struct {
 	model.PdfRectangle
@@ -59,15 +106,7 @@ func (idr idRect) validate() {
 	}
 }
 
-type mosaic struct {
-	rects    []idRect
-	orderLlx []int
-	orderUrx []int
-	orderLly []int
-	orderUry []int
-}
-
-func (m mosaic) check() {
+func (m mosaic) validate() {
 	checkIota(m.rects, m.orderLlx, selectLlx)
 	checkIota(m.rects, m.orderUrx, selectUrx)
 	checkIota(m.rects, m.orderLly, selectLly)
@@ -77,7 +116,7 @@ func (m mosaic) check() {
 // intersectXY returns the indexes of the idRects that intersect
 //  x, y: `llx` ≤ x ≤ `urx` and `lly` ≤ y ≤ `ury`.
 func (m mosaic) intersectXY(llx, urx, lly, ury float64) []int {
-	m.check()
+	m.validate()
 	xvals := m.intersectX(llx, urx)
 	yvals := m.intersectY(lly, ury)
 	return sliceIntersection(xvals, yvals)
@@ -85,10 +124,16 @@ func (m mosaic) intersectXY(llx, urx, lly, ury float64) []int {
 
 // intersectX returns the m.rects indexes that intersect  x: `llx` ≤ x ≤ `urx`.
 func (m mosaic) intersectX(llx, urx float64) []int {
+	if llx > urx {
+		panic(fmt.Errorf("mosaic.intersectX params: llx=%g urx=%g", llx, urx))
+	}
+	if llx == urx {
+		return nil
+	}
 	// i0 is the first element for which r.Urx >= llx
 	// common.Log.Info("intersectX: llx=%5.1f urx=%5.1f %d rects =============================================",
 	// 	llx, urx, len(m.rects))
-	m.check()
+	m.validate()
 	i0, _ := m.findUrx(llx)
 	// common.Log.Info("<< i0=%d", i0)
 	if i0 < 0 {
@@ -131,6 +176,12 @@ func (m mosaic) intersectX(llx, urx float64) []int {
 
 // intersectY returns the indexes of the idRects that intersect  y: `lly` ≤ y ≤ `ury`.
 func (m mosaic) intersectY(lly, ury float64) []int {
+	if lly > ury {
+		panic(fmt.Errorf("mosaic.intersectY params: lly=%g ury=%g", lly, ury))
+	}
+	if lly == ury {
+		return nil
+	}
 	// i0 is the first element for which r.Ury >= lly
 	i0, _ := m.findUry(lly)
 	// common.Log.Info("<< i0=%d", i0)
@@ -229,7 +280,7 @@ func (m mosaic) find(x float64, order []int, selector func(idRect) float64) (int
 }
 
 func (m *mosaic) connect() {
-	m.check()
+	m.validate()
 	border := 20.0
 	i0 := 0
 	for i, r := range m.rects[i0:] {
@@ -243,7 +294,7 @@ func (m *mosaic) connect() {
 		r.right = subtract(r.right, r.id)
 		r.below = subtract(r.below, r.id)
 		m.rects[i0+i] = r
-		m.check()
+		m.validate()
 
 		for j, o := range r.above {
 			c := m.rects[o]
@@ -273,40 +324,6 @@ func subtract(order []int, victim int) []int {
 // 	rl := idRectsToRectList(rects)
 // 	return createMosaic(rl)
 // }
-
-func createMosaic(rl rectList) mosaic {
-	n := len(rl)
-	rects := make([]idRect, n)
-	orderLlx := make([]int, n)
-	orderUrx := make([]int, n)
-	orderLly := make([]int, n)
-	orderUry := make([]int, n)
-	for i, r := range rl {
-		rects[i] = idRect{id: i, PdfRectangle: r}
-		orderLlx[i] = i
-		orderUrx[i] = i
-		orderLly[i] = i
-		orderUry[i] = i
-	}
-	sortIota(rects, orderLlx, selectLlx)
-	sortIota(rects, orderUrx, selectUrx)
-	sortIota(rects, orderLly, selectLly)
-	sortIota(rects, orderUry, selectUry)
-
-	checkIota(rects, orderLlx, selectLlx)
-	checkIota(rects, orderUrx, selectUrx)
-	checkIota(rects, orderLly, selectLly)
-	checkIota(rects, orderUry, selectUry)
-
-	return mosaic{
-		rects:    rects,
-		orderLlx: orderLlx,
-		orderUrx: orderUrx,
-		orderLly: orderLly,
-		orderUry: orderUry,
-	}
-
-}
 
 func sortIota(rects []idRect, order []int, selector func(idRect) float64) {
 	sort.Slice(order, func(i, j int) bool {

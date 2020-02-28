@@ -16,25 +16,45 @@ import (
 // excludes the bounding boxes of `textMarks`
 func whitespaceCover(pageBound model.PdfRectangle, words []extractor.TextMarkArray) (
 	model.PdfRectangle, rectList, rectList) {
-	maxboxes := 20
-	maxoverlap := 0.01
-	maxperim := pageBound.Width() + pageBound.Height()*0.05
-	frac := 0.01
-	maxpops := 20000
+	// maxboxes := 20
+	// maxoverlap := 0.01
+	// maxperim := pageBound.Width() + pageBound.Height()*0.05
+	// frac := 0.01
+	// maxpops := 20000
 
 	obstacles := wordBBoxes(words)
 	sigObstacles = wordBBoxMap(words)
 	bound := pageBound
 	{
 		envelope := obstacles.union()
+		for _, r := range obstacles {
+			if r.Llx < envelope.Llx {
+				panic("A) llx")
+			}
+			if r.Urx > envelope.Urx {
+				panic("B) urx")
+			}
+		}
+
 		contraction, _ := geometricIntersection(bound, envelope)
 		// contraction.Llx += 100
 		// contraction.Urx -= 100
 		common.Log.Info("contraction\n\t   bound=%s\n\tenvelope=%s\n\tcontract=%s",
 			showBBox(bound), showBBox(envelope), showBBox(contraction))
 		bound = contraction
+
+		var visible rectList
+		for _, r := range obstacles {
+			v, ok := geometricIntersection(bound, r)
+			if ok {
+				visible = append(visible, v)
+			}
+		}
+		obstacles = visible
 	}
-	cover := obstacleCover(bound, obstacles, maxboxes, maxoverlap, maxperim, frac, maxpops)
+
+	cover := fragmentPage(bound, obstacles, 12.0)
+	// cover := obstacleCover(bound, obstacles, maxboxes, maxoverlap, maxperim, frac, maxpops)
 	return bound, obstacles, cover
 }
 

@@ -18,7 +18,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,12 +47,14 @@ const (
 	// key and the UNIPDF_CUSTOMER_NAME the explicitly specified customer name to which the key is
 	// licensed.
 	uniDocLicenseKey = ``
-	companyName = ""
+	companyName      = ""
 )
 
 var saveParams saveMarkedupParams
 
 func main() {
+	// common.SetLogger(common.NewConsoleLogger(common.LogLevelInfo))
+	// testMosaic()
 	var (
 		loglevel   string
 		saveMarkup string
@@ -84,6 +85,7 @@ func main() {
 	default:
 		common.SetLogger(common.NewConsoleLogger(common.LogLevelInfo))
 	}
+
 	if uniDocLicenseKey != "" {
 		if err := license.SetLicenseKey(uniDocLicenseKey, companyName); err != nil {
 			panic(fmt.Errorf("error loading UniDoc license: err=%w", err))
@@ -99,6 +101,9 @@ func main() {
 		panic(fmt.Errorf("Couldn't create markupDir=%q err=%w", markupDir, err))
 	}
 	saveParams.markupDir = markupDir
+	if markupDir == "" || markupDir == "." {
+		panic(markupDir)
+	}
 
 	// inPath := args[0]
 	for _, inPath := range args {
@@ -112,8 +117,6 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		// fmt.Fprintf(os.Stderr, " markupOutputPath=%q ", saveParams.markupOutputPath)
-		// fmt.Fprintf(os.Stderr, "shownMarkups=%q\n", saveParams.shownMarkups)
 	}
 }
 
@@ -137,7 +140,6 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 		return fmt.Errorf("GetNumPages failed. %q err=%w", inPath, err)
 	}
 
-	saveParams.inPath = inPath
 	saveParams.markups = map[int]map[string]rectList{}
 
 	var pageTexts []string
@@ -201,6 +203,27 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 
 		common.Log.Info("%d words", len(words))
 
+		bboxes := wordBBoxes(words)
+		m := createMosaic(bboxes)
+		m.connect()
+		common.Log.Info("m=%d", len(m.rects))
+		i0 := len(m.rects)/2 - 10
+		if i0 < 0 {
+			i0 = 0
+		}
+		i1 := i0 + 20
+		if i1 > len(m.rects) {
+			i1 = len(m.rects)
+			i0 = i1 - 20
+			if i0 < 0 {
+				i0 = 0
+			}
+		}
+		for i, r := range m.rects[i0:i1] {
+			fmt.Printf("%4d: -- r=%s\n", i0+i, m.rectString(r))
+		}
+		// continue
+
 		group := make(rectList, textMarks.Len())
 		for i, mark := range textMarks.Elements() {
 			group[i] = mark.BBox
@@ -216,11 +239,12 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 		pageTexts = append(pageTexts, header)
 		pageTexts = append(pageTexts, outPageText)
 	}
+	// return nil
 
-	docText := strings.Join(pageTexts, "\n")
-	if err := ioutil.WriteFile(outPath, []byte(docText), 0666); err != nil {
-		return fmt.Errorf("failed to write outPath=%q err=%w", outPath, err)
-	}
+	// docText := strings.Join(pageTexts, "\n")
+	// if err := ioutil.WriteFile(outPath, []byte(docText), 0666); err != nil {
+	// 	return fmt.Errorf("failed to write outPath=%q err=%w", outPath, err)
+	// }
 
 	for _, markupType := range []string{"gaps", "marks", "columns"} {
 		err = saveMarkedupPDF(saveParams, inPath, markupType)
@@ -268,24 +292,25 @@ func pageMarksToColumnText(pageNum int, words []extractor.TextMarkArray, pageBou
 	common.Log.Info("%d big pageGaps~~~~~~~~~~~~~~~~~~~ ", len(bigBBoxes))
 	pageGaps = bigBBoxes
 
+	y := -100.0
 	for i, bbox := range pageGaps {
+		if bbox.Ury != y {
+			y = bbox.Ury
+			common.Log.Info("y=%5.1f", y)
+		}
 		common.Log.Info("%4d of %d: %s", i+1, len(pageGaps), showBBox(bbox))
 	}
 
 	saveParams.markups[saveParams.curPage]["gaps"] = pageGaps
 
-	columns := scanPage(pageBound, pageGaps)
-	// columns = removeEmpty(pageBound, columns, obstacles)
-	saveParams.markups[saveParams.curPage]["columns"] = columns
+	// columns := scanPage(pageBound, pageGaps)
+	// // columns = removeEmpty(pageBound, columns, obstacles)
+	// saveParams.markups[saveParams.curPage]["columns"] = columns
 
 	// columnText := getColumnText(lines, columnBBoxes)
 	// return strings.Join(columnText, "\n####\n"), nil
 	return "FIX ME", nil
 }
-
-
-
-const charMultiplier = 1.0
 
 // makeUsage updates flag.Usage to include usage message `msg`.
 func makeUsage(msg string) {
@@ -298,12 +323,22 @@ func makeUsage(msg string) {
 
 // changePath inserts `insertion` into `filename` before suffix `ext`.
 func changePath(dirName, filename, qualifier, ext string) string {
-	oxt := filepath.Ext(filename)
-	base := filename[:len(filename)-len(oxt)]
+	// fmt.Fprintf(os.Stderr, "  dirName=%q\n", dirName)
+	// fmt.Fprintf(os.Stderr, " filename=%q\n", filename)
+	// fmt.Fprintf(os.Stderr, "qualifier=%q\n", qualifier)
+	// fmt.Fprintf(os.Stderr, "      ext=%q\n", ext)
+	base := filepath.Base(filename)
+	// fmt.Fprintf(os.Stderr, "     base=%q\n", base)
+	oxt := filepath.Ext(base)
+	// fmt.Fprintf(os.Stderr, "      oxt=%q\n", oxt)
+	base = base[:len(base)-len(oxt)]
+	// fmt.Fprintf(os.Stderr, "     base=%q\n", base)
 	if len(qualifier) > 0 {
 		base = fmt.Sprintf("%s.%s", base, qualifier)
 	}
+	// fmt.Fprintf(os.Stderr, "     base=%q\n", base)
 	filename = fmt.Sprintf("%s%s", base, ext)
+	// fmt.Fprintf(os.Stderr, " filename=%q\n", filename)
 	path := filepath.Join(dirName, filename)
 	common.Log.Info("changePath(%q,%q,%q)->%q", dirName, base, ext, path)
 	return path

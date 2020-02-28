@@ -11,7 +11,6 @@ import (
 )
 
 type saveMarkedupParams struct {
-	inPath    string
 	markups   map[int]map[string]rectList
 	curPage   int
 	markupDir string
@@ -20,6 +19,9 @@ type saveMarkedupParams struct {
 // Saves a marked up PDF with the original with certain groups highlighted: marks, words, lines, columns.
 func saveMarkedupPDF(params saveMarkedupParams, inPath, markupType string) error {
 	markupOutputPath := changePath(params.markupDir, inPath, markupType, ".pdf")
+	// fmt.Fprintf(os.Stderr, "      markupType=%q\n", markupType)
+	// fmt.Fprintf(os.Stderr, "params.markupDir=%q\n", params.markupDir)
+	// fmt.Fprintf(os.Stderr, "          inPath=%q\n", inPath)
 	// fmt.Fprintf(os.Stderr, "      markupType=%q\n", markupType)
 	// fmt.Fprintf(os.Stderr, "markupOutputPath=%q\n", markupOutputPath)
 
@@ -32,9 +34,9 @@ func saveMarkedupPDF(params saveMarkedupParams, inPath, markupType string) error
 		return nil
 	}
 
-	f, err := os.Open(params.inPath)
+	f, err := os.Open(inPath)
 	if err != nil {
-		return fmt.Errorf("Could not open %q err=%w", params.inPath, err)
+		return fmt.Errorf("Could not open %q err=%w", inPath, err)
 	}
 	defer f.Close()
 
@@ -70,8 +72,7 @@ func saveMarkedupPDF(params saveMarkedupParams, inPath, markupType string) error
 		dx := 0.0
 		dy := 0.0
 
-		common.Log.Info("markupType=%q dx=%.1f dy=%.1f pageNum=%d",
-			markupType, dx, dy, pageNum)
+		common.Log.Info("markupType=%q dx=%.1f dy=%.1f pageNum=%d", markupType, dx, dy, pageNum)
 
 		width := widths[markupType]
 		borderColor := creator.ColorRGBFromHex(colors[markupType])
@@ -87,7 +88,7 @@ func saveMarkedupPDF(params saveMarkedupParams, inPath, markupType string) error
 			lly := r.Lly + dy
 			ury := r.Ury - dy
 
-			w := width * 4
+			w := width * 2
 			rect := c.NewRectangle(llx+w, h-(lly+w), urx-llx-2*w, -(ury - lly - 2*w))
 			rect.SetBorderColor(bgdColor)
 			rect.SetBorderWidth(2.0 * w)
@@ -108,7 +109,7 @@ func saveMarkedupPDF(params saveMarkedupParams, inPath, markupType string) error
 
 	// c.SetOutlineTree(params.pdfReader.GetOutlineTree())
 	if err := c.WriteToFile(markupOutputPath); err != nil {
-		return fmt.Errorf("WriteToFile failed. err=%w", err)
+		return fmt.Errorf("WriteToFile failed. %q err=%w", markupOutputPath, err)
 	}
 
 	common.Log.Info("Saved marked-up PDF file: %q", markupOutputPath)
@@ -121,8 +122,8 @@ var (
 		"words":   0.1,
 		"lines":   0.2,
 		"divs":    0.6,
-		"gaps":    0.9,
-		"columns": 0.8,
+		"gaps":    0.3,
+		"columns": 0.4,
 		"page":    1.1,
 	}
 	colors = map[string]string{

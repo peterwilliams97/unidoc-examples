@@ -54,9 +54,9 @@ func (sl scanLine) toRectList() rectList {
 	return rl
 }
 
-func (sl scanLine) checkOverlaps() {
+func (sl scanLine) checkXOverlaps() {
 	rl := sl.toRectList()
-	rl.checkOverlaps()
+	rl.checkXOverlaps()
 }
 
 func (sl scanLine) String() string {
@@ -72,8 +72,6 @@ type scanEvent struct {
 	idRect
 	enter bool // true if entering, false if leaving `idRect`.
 }
-
-
 
 // scanPage returns the rectangles in `pageBound` that are separated by `pageGaps`.
 func scanPage(pageBound model.PdfRectangle, pageGaps rectList) rectList {
@@ -176,7 +174,7 @@ func perforate(bound model.PdfRectangle, gaps []idRect, y float64) rectList {
 		return rectList{r}
 	}
 	sortX(gaps, false)
-	checkOverlaps(gaps)
+	checkXOverlaps(gaps)
 
 	events := make([]xEvent, 2*len(gaps))
 	for i, r := range gaps {
@@ -238,8 +236,8 @@ func perforate(bound model.PdfRectangle, gaps []idRect, y float64) rectList {
 func (ss *scanState) extendColumns(columns rectList, y float64) {
 	// columns.sortX()
 	sortX(ss.running, true)
-	columns.checkOverlaps()
-	checkOverlaps(ss.running)
+	columns.checkXOverlaps()
+	checkXOverlaps(ss.running)
 
 	delta := 1.0
 	contRun := map[int]struct{}{}
@@ -277,9 +275,9 @@ func (ss *scanState) extendColumns(columns rectList, y float64) {
 
 	common.Log.Info("extendColumns: ss=%s", ss)
 	sortX(ss.running, true)
-	checkOverlaps(ss.running)
+	checkXOverlaps(ss.running)
 	// sortX(ss.completed, true)
-	// checkOverlaps(ss.completed)
+	// checkXOverlaps(ss.completed)
 }
 
 // gapsToScanLines creates the list of scan lines corresponding to gaps `pageGaps`.
@@ -305,13 +303,13 @@ func (ss *scanState) gapsToScanLines(pageGaps rectList) []scanLine {
 	var slines []scanLine
 	e := events[0]
 	sl := scanLine{y: e.y(), events: []scanEvent{e}}
-	sl.checkOverlaps()
+	sl.checkXOverlaps()
 	common.Log.Info("! %2d of %d: %s", 1, len(events), e)
 	for i, e := range events[1:] {
 		common.Log.Info("! %2d of %d: %s", i+2, len(events), e)
 		if e.y() > sl.y-1.0 {
 			sl.events = append(sl.events, e)
-			// sl.checkOverlaps()
+			// sl.checkXOverlaps()
 		} else {
 			slines = append(slines, sl)
 			sl = scanLine{y: e.y(), events: []scanEvent{e}}
@@ -344,8 +342,8 @@ func (sl scanLine) columnsScan(pageBound model.PdfRectangle, enter bool) (
 	}
 	x1 := pageBound.Urx
 	addCol(x0, x1)
-	opened.checkOverlaps()
-	closed.checkOverlaps()
+	opened.checkXOverlaps()
+	closed.checkXOverlaps()
 	return opened, closed
 }
 
@@ -367,7 +365,7 @@ func (sl scanLine) updateGaps(gaps []idRect) []idRect {
 		}
 	}
 
-	// checkOverlaps(idrs)
+	// checkXOverlaps(idrs)
 	return minus
 }
 
@@ -379,7 +377,7 @@ func (sl scanLine) opening() []idRect {
 			idrs = append(idrs, e.idRect)
 		}
 	}
-	// checkOverlaps(idrs)
+	// checkXOverlaps(idrs)
 	return idrs
 }
 
@@ -391,7 +389,7 @@ func (sl scanLine) closing() []idRect {
 			idrs = append(idrs, e.idRect)
 		}
 	}
-	// checkOverlaps(idrs)
+	// checkXOverlaps(idrs)
 	return idrs
 }
 

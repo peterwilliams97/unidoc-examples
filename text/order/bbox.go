@@ -174,27 +174,27 @@ func (rl rectList) String() string {
 	return fmt.Sprintf("{RECTLIST: %d elements=[\n%s]", len(rl), strings.Join(parts, "\n"))
 }
 
-func (rl rectList) checkOverlaps() {
+func (rl rectList) checkXOverlaps() {
 	if len(rl) == 0 {
 		return
 	}
 	r0 := rl[0]
 	for _, r := range rl[1:] {
 		if r.Llx < r0.Urx {
-			panic(fmt.Errorf("checkOverlaps:\n\tr0=%s\n\t r=%s", showBBox(r0), showBBox(r)))
+			panic(fmt.Errorf("checkXOverlaps:\n\tr0=%s\n\t r=%s", showBBox(r0), showBBox(r)))
 		}
 		r0 = r
 	}
 }
 
-func checkOverlaps(rl []idRect) {
+func checkXOverlaps(rl []idRect) {
 	if len(rl) == 0 {
 		return
 	}
 	r0 := rl[0]
 	for _, r := range rl[1:] {
 		if r.Llx < r0.Urx {
-			panic(fmt.Errorf("checkOverlaps:\n\tr0=%s\n\t r=%s", r0, r))
+			panic(fmt.Errorf("checkXOverlaps:\n\tr0=%s\n\t r=%s", r0, r))
 		}
 		r0 = r
 	}
@@ -278,12 +278,14 @@ func geometricIntersection(r0, r1 model.PdfRectangle) (model.PdfRectangle, bool)
 	if !intersects(r0, r1) {
 		return model.PdfRectangle{}, false
 	}
-	return model.PdfRectangle{
+	r := model.PdfRectangle{
 		Llx: math.Max(r0.Llx, r1.Llx),
 		Urx: math.Min(r0.Urx, r1.Urx),
 		Lly: math.Max(r0.Lly, r1.Lly),
 		Ury: math.Min(r0.Ury, r1.Ury),
-	}, true
+	}
+	ok := r.Llx < r.Urx && r.Lly < r.Ury
+	return r, ok
 }
 
 // horizontalIntersection returns a rectangle that is the horizontal intersection and vertical union
