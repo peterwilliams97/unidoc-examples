@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"os"
 	"sort"
 	"strings"
 
@@ -41,6 +42,13 @@ func fragmentPage(pageBound model.PdfRectangle, pageWords rectList, gapSize floa
 			wideGaps = append(wideGaps, gap)
 		}
 	}
+
+	m := createMosaic(wideGaps)
+	m.connectRecursive(0.5)
+	for i, r := range m.rects {
+		fmt.Printf("%4d: -- r=%s\n", i, m.rectString(r))
+	}
+	os.Exit(-3)
 	return wideGaps
 	// slines := ss.wordsToFragmentLines(pageWords)
 	// common.Log.Info("@@ fragmentPage: pageBound=%s", showBBox(pageBound))

@@ -124,7 +124,7 @@ func main() {
 // file to `outPath`.
 func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 	common.Log.Info("extractColumnText: inPath=%q [%d:%d]->%q", inPath, firstPage, lastPage, outPath)
-	fmt.Fprintf(os.Stderr, "&&& inPath=%q [%d:%d]->%q\n", inPath, firstPage, lastPage, outPath)
+	fmt.Fprintf(os.Stderr, "\n&&& inPath=%q [%d:%d]->%q\n", inPath, firstPage, lastPage, outPath)
 	f, err := os.Open(inPath)
 	if err != nil {
 		return fmt.Errorf("Could not open %q err=%w", inPath, err)
@@ -205,7 +205,7 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 
 		bboxes := wordBBoxes(words)
 		m := createMosaic(bboxes)
-		m.connect()
+		m.connect(10.0)
 		common.Log.Info("m=%d", len(m.rects))
 		i0 := len(m.rects)/2 - 10
 		if i0 < 0 {
@@ -323,22 +323,13 @@ func makeUsage(msg string) {
 
 // changePath inserts `insertion` into `filename` before suffix `ext`.
 func changePath(dirName, filename, qualifier, ext string) string {
-	// fmt.Fprintf(os.Stderr, "  dirName=%q\n", dirName)
-	// fmt.Fprintf(os.Stderr, " filename=%q\n", filename)
-	// fmt.Fprintf(os.Stderr, "qualifier=%q\n", qualifier)
-	// fmt.Fprintf(os.Stderr, "      ext=%q\n", ext)
 	base := filepath.Base(filename)
-	// fmt.Fprintf(os.Stderr, "     base=%q\n", base)
 	oxt := filepath.Ext(base)
-	// fmt.Fprintf(os.Stderr, "      oxt=%q\n", oxt)
 	base = base[:len(base)-len(oxt)]
-	// fmt.Fprintf(os.Stderr, "     base=%q\n", base)
 	if len(qualifier) > 0 {
 		base = fmt.Sprintf("%s.%s", base, qualifier)
 	}
-	// fmt.Fprintf(os.Stderr, "     base=%q\n", base)
 	filename = fmt.Sprintf("%s%s", base, ext)
-	// fmt.Fprintf(os.Stderr, " filename=%q\n", filename)
 	path := filepath.Join(dirName, filename)
 	common.Log.Info("changePath(%q,%q,%q)->%q", dirName, base, ext, path)
 	return path
