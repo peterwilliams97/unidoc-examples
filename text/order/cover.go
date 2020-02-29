@@ -134,7 +134,7 @@ func obstacleCover(bound model.PdfRectangle, obstacles rectList,
 	if n > 30 {
 		n = 30
 	}
-	saveParams.markups[saveParams.curPage]["marks"] = tos[:n]
+	// saveParams.markups[saveParams.curPage]["marks"] = tos[:n]
 	common.Log.Info("tos=%d", len(tosP))
 	for i, r := range tosP {
 		// fmt.Printf("%4d: %s %5.3f\n", i, showBBox(r), partEltQuality(r))

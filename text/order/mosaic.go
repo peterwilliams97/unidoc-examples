@@ -306,13 +306,41 @@ func (m mosaic) find(x float64, order []int, selector func(idRect) float64) (int
 	return idx, order[idx]
 }
 
+func (m mosaic) bestVert(order []int, minGap float64) (model.PdfRectangle, []int) {
+	rrl := m.asRectList(order)
+	longest := 0.0
+	besti0 := -1
+	besti1 := -1
+	var bestr model.PdfRectangle
+	for i0 := 0; i0 < len(order); i0++ {
+		for i1 := i0; i1 < len(order); i1++ {
+			rl := rrl[i0 : i1+1]
+			r := intersectWay(above, rl...)
+			if r.Urx-r.Llx < minGap {
+				continue
+			}
+			h := r.Ury - r.Lly
+			if h > longest {
+				longest = h
+				besti0 = i0
+				besti1 = i1
+				bestr = r
+			}
+		}
+	}
+	if besti0 < 0 {
+		return bestr, nil
+	}
+	return bestr, order[besti0 : besti1+1]
+}
+
 type direction int
 
 const (
 	above direction = iota
+	below
 	left
 	right
-	below
 )
 
 func shiftWay(r model.PdfRectangle, delta float64, way direction) model.PdfRectangle {
@@ -359,11 +387,18 @@ func intersectWay(way direction, rl ...model.PdfRectangle) model.PdfRectangle {
 	return r0
 }
 
+var maxDepth = 0
+
 func (m *mosaic) intersectRecursive(bound model.PdfRectangle, idr idRect, delta float64, way direction,
-	depth int) []int {
-	common.Log.Info("intersectRecursive delta=%g, way=%d idr=%s", delta, way, idr)
+	root, depth int) []int {
+	common.Log.Info("intersectRecursive root=%d depth=%d  way=%d delta=%g idr=%s",
+		root, depth, way, delta, idr)
 	if depth > 100 {
 		panic("depth")
+	}
+	if depth > maxDepth {
+		maxDepth = depth
+		common.Log.Info("!!!!maxDepth=%d", maxDepth)
 	}
 
 	r0 := shiftWay(idr.PdfRectangle, delta, way)
@@ -374,14 +409,14 @@ func (m *mosaic) intersectRecursive(bound model.PdfRectangle, idr idRect, delta 
 	}
 	vals0 := m.intersectXY(r.Llx, r.Urx, r.Lly, r.Ury)
 	vals0 = subtract(vals0, idr.id)
-	fmt.Printf("\t%3d: vals=%d %+v \n", depth, len(vals0), vals0)
+	fmt.Printf("\t << root=%d depth=%d: vals0=%d %+v\n", root, depth, len(vals0), vals0)
 	indexes := vals0[:]
 	for _, i := range vals0 {
 		idr := m.getRect(i)
-		vals := m.intersectRecursive(bound, idr, delta, way, depth+1)
+		vals := m.intersectRecursive(bound, idr, delta, way, root, depth+1)
 		indexes = append(indexes, vals...)
 	}
-	fmt.Printf("\t %3d: way=%d indexes=%d %+v\n", depth, way, len(indexes), indexes)
+	fmt.Printf("\t >> root=%d depth=%d: way=%d indexes=%d %+v\n", root, depth, way, len(indexes), indexes)
 	if way == above || way == below {
 		for j, o := range indexes {
 			c := m.rects[o]
@@ -420,10 +455,10 @@ func (m *mosaic) intersectRecursive(bound model.PdfRectangle, idr idRect, delta 
 func (m *mosaic) connectRecursive(delta float64) {
 	m.validate()
 	for i, r := range m.rects {
-		r.above = m.intersectRecursive(r.PdfRectangle, r, delta, above, 0)
-		r.left = m.intersectRecursive(r.PdfRectangle, r, delta, left, 0)
-		r.right = m.intersectRecursive(r.PdfRectangle, r, delta, right, 0)
-		r.below = m.intersectRecursive(r.PdfRectangle, r, delta, below, 0)
+		r.above = m.intersectRecursive(r.PdfRectangle, r, delta, above, r.id, 0)
+		r.left = m.intersectRecursive(r.PdfRectangle, r, delta, left, r.id, 0)
+		r.right = m.intersectRecursive(r.PdfRectangle, r, delta, right, r.id, 0)
+		r.below = m.intersectRecursive(r.PdfRectangle, r, delta, below, r.id, 0)
 
 		r.above = subtract(r.above, r.id)
 		r.left = subtract(r.left, r.id)
@@ -440,6 +475,7 @@ func (m *mosaic) connectRecursive(delta float64) {
 					j, r, r.PdfRectangle, c, c.PdfRectangle))
 			}
 		}
+		common.Log.Info("connectRecursive %d: %s", i, m.rectString(r))
 		// panic("done")
 		// }
 	}

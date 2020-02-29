@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/unidoc/unipdf/v3/common"
@@ -207,21 +208,66 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 		m := createMosaic(bboxes)
 		m.connect(10.0)
 		common.Log.Info("m=%d", len(m.rects))
-		i0 := len(m.rects)/2 - 10
-		if i0 < 0 {
-			i0 = 0
+
+		heightOrder := make([]int, len(m.rects))
+		for i := 0; i < len(m.rects); i++ {
+			heightOrder[i] = i
 		}
-		i1 := i0 + 20
-		if i1 > len(m.rects) {
-			i1 = len(m.rects)
-			i0 = i1 - 20
-			if i0 < 0 {
-				i0 = 0
+		sort.Slice(heightOrder, func(i, j int) bool {
+			oi, oj := heightOrder[i], heightOrder[j]
+			ri, rj := m.rects[oi], m.rects[oj]
+			hi := len(ri.above) + len(ri.below)
+			hj := len(rj.above) + len(rj.below)
+			if hi != hj {
+				return hi > hj
+			}
+			return ri.id > rj.id
+		})
+		common.Log.Info("All rects: %d", len(m.rects))
+		besti := -1
+		bestH := -1.0
+		verts := make(rectList, len(m.rects))
+		for i, o := range heightOrder {
+			r := m.rects[o]
+			fmt.Printf("%4d: -- r=%s\n", i, m.rectString(r))
+			vert := append(r.above, r.id)
+			vert = append(vert, r.below...)
+			rr, order := m.bestVert(vert, 5.0)
+			verts[i] = rr
+			// bbox := m.asRectList(best).union()
+			fmt.Printf("   bestVert=%s %v\n", showBBox(rr), order)
+			if rr.Height() > bestH {
+				besti = i
+				bestH = rr.Height()
 			}
 		}
-		for i, r := range m.rects[i0:i1] {
-			fmt.Printf("%4d: -- r=%s\n", i0+i, m.rectString(r))
+		sort.Slice(verts, func(i, j int) bool {
+			ri, rj := verts[i], verts[j]
+			hi, hj := ri.Height(), rj.Height()
+			if hi != hj {
+				return hi > hj
+			}
+			return ri.Width() > rj.Width()
+		})
+		var talls rectList
+		for _, r := range verts {
+			if r.Height() > 40.0 {
+				talls = append(talls, r)
+			}
 		}
+		saveParams.markups[pageNum]["marks"] = talls
+		common.Log.Info("<<<<verts=%4d talls=%4d  =====================", len(verts), len(talls))
+		for i, r := range verts {
+			fmt.Printf("%4d: %s\n", i, showBBox(r))
+		}
+
+		r := m.rects[besti]
+		common.Log.Info("%4d: -- r=%s =====================", besti, m.rectString(r))
+		vert := append(r.above, r.id)
+		vert = append(vert, r.below...)
+		rr, order := m.bestVert(vert, 10.0)
+		fmt.Printf("bestVert=%s %v\n", showBBox(rr), order)
+		// panic("1")
 		// continue
 
 		group := make(rectList, textMarks.Len())
