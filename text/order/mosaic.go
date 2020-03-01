@@ -343,9 +343,13 @@ const (
 	right
 )
 
-func shiftWay(r model.PdfRectangle, delta float64, way direction) model.PdfRectangle {
+// shiftWay returns `r` shifted by distance `delta` in direction `way`.
+func shiftWay(way direction, delta float64, r model.PdfRectangle) model.PdfRectangle {
 	switch way {
 	case above:
+		r.Lly -= delta
+		r.Ury -= delta
+	case below:
 		r.Lly += delta
 		r.Ury += delta
 	case left:
@@ -354,16 +358,16 @@ func shiftWay(r model.PdfRectangle, delta float64, way direction) model.PdfRecta
 	case right:
 		r.Llx += delta
 		r.Urx += delta
-	case below:
-		r.Lly -= delta
-		r.Ury -= delta
 	}
 	return r
 }
 
+// intersectWay returns the union of rectangles `rl` in direction `way` and the intersection of the
+// rectangles in the traverse direction to `way`.
 func intersectWay(way direction, rl ...model.PdfRectangle) model.PdfRectangle {
 	// common.Log.Info("intersectWay: way=%d rl=%d", way, len(rl))
 	r0 := rl[0]
+	// common.Log.Info("@# %3d: %s s", 0, showBBox(r0))
 	for _, r1 := range rl[1:] {
 		// r00 := r0
 		switch way {
@@ -381,16 +385,78 @@ func intersectWay(way direction, rl ...model.PdfRectangle) model.PdfRectangle {
 				Lly: math.Max(r0.Lly, r1.Lly),
 				Ury: math.Min(r0.Ury, r1.Ury)}
 		}
-		// common.Log.Info("@# %3d: %s & %s -> %s", i, showBBox(r00), showBBox(r1), showBBox(r0))
+		// common.Log.Info("@# %3d: %s & %s -> %s", i+1, showBBox(r00), showBBox(r1), showBBox(r0))
 	}
 	// common.Log.Info("!! %s", showBBox(r0))
 	return r0
 }
 
+// findIntersectionWay walks through the `m.rects` indexes in `order` applies intersectWay(`way`) to
+// them and stops immediately before the intersection becomes zero.
+func (m mosaic) findIntersectionWay(way direction, bound model.PdfRectangle, order []int) []int {
+	if len(order) == 0 {
+		return nil
+	}
+	common.Log.Info("findIntersectionWay way=%d bound=%sorder= %d %v ==================",
+		way, showBBox(bound), len(order), order)
+	var isect []int
+	for i, o := range order {
+		r := m.rects[o]
+		bound = intersectWay(way, bound, r.PdfRectangle)
+		// common.Log.Info("@# %3d: %s & %s -> %s", i, showBBox(r00), showBBox(r1), showBBox(r0))
+		if bound.Llx >= bound.Urx || bound.Lly >= bound.Ury {
+			break
+		}
+		common.Log.Info("findIntersectionWay %d: bound=%s r=%s indexes= %d %v",
+			i, showBBox(bound), showBBox(r.PdfRectangle), len(isect), isect)
+		isect = append(isect, o)
+	}
+	// common.Log.Info("!! %s", showBBox(r0))
+
+	if len(isect) == 0 {
+		return nil
+	}
+
+	if doValidate {
+		indexes := isect
+		rl := m.asRectList(indexes)
+		r := intersectWay(way, rl...)
+		common.Log.Info("findIntersectionWay YYY: way=%d indexes=%d %v\n\tbound=%s\n\t    r=%s",
+			way, len(indexes), indexes, showBBox(bound), showBBox(r))
+		for i, o := range indexes {
+			fmt.Printf("%4d: %s\n", i, m.getRect(o))
+		}
+		if r.Llx >= r.Urx || r.Lly >= r.Ury {
+			panic(fmt.Errorf("findIntersectionWay: no intersecton: way=%d", way))
+		}
+	}
+	return isect
+}
+
+// constrictTraverse constricts `r` in the traverse direction of `way`.
+func constrictTraverse(way direction, r, r0 model.PdfRectangle) model.PdfRectangle {
+	// common.Log.Info("intersectWay: way=%d rl=%d", way, len(rl))
+	switch way {
+	case above, below:
+		r.Llx = math.Max(r0.Llx, r.Llx)
+		r.Urx = math.Min(r0.Urx, r.Urx)
+	case left, right:
+		r.Lly = math.Max(r0.Lly, r.Lly)
+		r.Ury = math.Min(r0.Ury, r.Ury)
+	}
+	// common.Log.Info("!! %s", showBBox(r0))
+	return r
+}
+
+const doValidate = true
+
 var maxDepth = 0
 
-func (m *mosaic) intersectRecursive(bound model.PdfRectangle, idr idRect, delta float64, way direction,
-	root, depth int) []int {
+// intersectRecursive returns the indexes of the rectangles that are enclosed `idr` shifted `delta`
+// in direction `way`.
+func (m *mosaic) intersectRecursive(idr0, idr idRect, delta float64, way direction,
+	root, depth int, bound model.PdfRectangle) []int {
+
 	common.Log.Info("intersectRecursive root=%d depth=%d  way=%d delta=%g idr=%s",
 		root, depth, way, delta, idr)
 	if depth > 100 {
@@ -401,52 +467,124 @@ func (m *mosaic) intersectRecursive(bound model.PdfRectangle, idr idRect, delta 
 		common.Log.Info("!!!!maxDepth=%d", maxDepth)
 	}
 
-	r0 := shiftWay(idr.PdfRectangle, delta, way)
-	bound = intersectWay(way, r0, bound)
-	r, ok := geometricIntersection(bound, r0)
-	if !ok {
+	r := shiftWay(way, delta, idr.PdfRectangle)
+	bound = intersectWay(way, bound, r)
+	if doValidate { // validation
+		if way == above || way == below {
+			if bound.Llx < r.Llx || bound.Urx > r.Urx {
+				common.Log.Error("way=%d\n\tbound=%s\n\t    r=%s",
+					way, showBBox(bound), showBBox(r))
+				panic("bound x")
+			}
+		} else {
+			if bound.Lly < r.Lly || bound.Ury > r.Ury {
+				panic("bound y")
+			}
+		}
+
+		if way == above || way == below {
+			dllx := bound.Llx - r.Llx
+			durx := bound.Urx - r.Urx
+			if dllx < 0 || durx > 0 {
+				common.Log.Error("way=%d dllx=%g durx=%g\n\tbound=%s\n\t    r=%s",
+					way, dllx, durx, showBBox(bound), showBBox(r))
+				panic("bound x")
+			}
+		} else {
+			dllx := bound.Lly - r.Lly
+			durx := bound.Ury - r.Ury
+			if dllx < 0 || durx > 0 {
+				common.Log.Error("way=%d dllx=%g durx=%g\n\tbound=%s\n\t    r=%s",
+					way, dllx, durx, showBBox(bound), showBBox(r))
+				panic("bound y")
+			}
+		}
+	}
+
+	r = constrictTraverse(way, r, idr0.PdfRectangle)
+	r = constrictTraverse(way, r, bound)
+	if r.Llx >= r.Urx || r.Lly >= r.Ury {
+		panic("!!1")
 		return nil
 	}
+	if bound.Llx >= bound.Urx || bound.Lly >= bound.Ury {
+		panic("!!2")
+		return nil
+	}
+
+	filter := func(vals []int) []int {
+		// var isect []int
+		// for _, o := range vals {
+		// 	c := m.rects[o]
+		// 	vert := way == above || way == below
+		// 	// r := idr.PdfRectangle
+		// 	r := bound
+		// 	if (vert && intersectsX(r, c.PdfRectangle)) || (!vert && intersectsY(r, c.PdfRectangle)) {
+		// 		isect = append(isect, o)
+		// 	}
+		// }
+		isect := vals
+		isect = subtract(isect, idr0.id)
+		isect = subtract(isect, idr.id)
+		return isect
+	}
+
 	vals0 := m.intersectXY(r.Llx, r.Urx, r.Lly, r.Ury)
-	vals0 = subtract(vals0, idr.id)
+	vals0 = filter(vals0)
+	vals0 = m.findIntersectionWay(way, bound, vals0)
+	if len(vals0) == 0 {
+		return nil
+	}
 	fmt.Printf("\t << root=%d depth=%d: vals0=%d %+v\n", root, depth, len(vals0), vals0)
 	indexes := vals0[:]
-	for _, i := range vals0 {
-		idr := m.getRect(i)
-		vals := m.intersectRecursive(bound, idr, delta, way, root, depth+1)
+	common.Log.Info("  vals0=%d %v", len(vals0), vals0)
+	for i, o := range vals0 {
+		idr := m.getRect(o)
+		vals := m.intersectRecursive(idr0, idr, delta, way, root, depth+1, bound)
+		vals = filter(vals)
+		// vals = m.findIntersectionWay(way, bound, vals)
+		common.Log.Info("vals[%d]=%d %v", i, len(vals0), vals0)
 		indexes = append(indexes, vals...)
+		indexes = m.findIntersectionWay(way, bound, indexes)
 	}
-	fmt.Printf("\t >> root=%d depth=%d: way=%d indexes=%d %+v\n", root, depth, way, len(indexes), indexes)
-	if way == above || way == below {
-		for j, o := range indexes {
-			c := m.rects[o]
-			if !intersectsX(idr.PdfRectangle, c.PdfRectangle) {
-				common.Log.Error("\n\t   idr=%s", m.rectString(idr))
-				common.Log.Error("\n\t     r=%s", showBBox(r))
-				panic(fmt.Errorf("intersectRecursive: No x overlap: j=%d\n\tr=%s %+v\n\tc=%s %+v",
-					j, idr, idr.PdfRectangle, c, c.PdfRectangle))
+	if doValidate { // validation
+		common.Log.Info("\t >> root=%d depth=%d: way=%d indexes=%d %+v", root, depth, way, len(indexes), indexes)
+		if way == above || way == below {
+			for j, o := range indexes {
+				c := m.rects[o]
+				if !intersectsX(idr.PdfRectangle, c.PdfRectangle) {
+					common.Log.Error("idr0=%s", showBBox(idr0.PdfRectangle))
+					common.Log.Error(" idr=%s", showBBox(idr.PdfRectangle))
+					common.Log.Error("   r=%s", showBBox(r))
+					for k, u := range indexes {
+						fmt.Printf("%8d: %s %t\n", k, m.rects[u], k == j)
+					}
+					panic(fmt.Errorf("intersectRecursive: No x overlap: j=%d way=%d\n\tr=%s %+v\n\tc=%s %+v",
+						j, way, idr, idr.PdfRectangle, c, c.PdfRectangle))
+				}
+			}
+		} else {
+			for j, o := range indexes {
+				c := m.rects[o]
+				if !intersectsY(idr.PdfRectangle, c.PdfRectangle) {
+					common.Log.Error("\n\t   idr=%s", m.rectString(idr))
+					common.Log.Error("\n\t     r=%s", showBBox(r))
+					panic(fmt.Errorf("intersectRecursive: No y overlap: j=%d way=%d\n\tr=%s %+v\n\tc=%s %+v",
+						j, way, idr, idr.PdfRectangle, c, c.PdfRectangle))
+				}
 			}
 		}
-	} else {
-		for j, o := range indexes {
-			c := m.rects[o]
-			if !intersectsY(idr.PdfRectangle, c.PdfRectangle) {
-				common.Log.Error("\n\t   idr=%s", m.rectString(idr))
-				common.Log.Error("\n\t     r=%s", showBBox(r))
-				panic(fmt.Errorf("intersectRecursive: No y overlap: j=%d\n\tr=%s %+v\n\tc=%s %+v",
-					j, idr, idr.PdfRectangle, c, c.PdfRectangle))
+		if len(indexes) > 0 {
+			rl := m.asRectList(indexes)
+			r := intersectWay(way, rl...)
+			common.Log.Info("XXX: vals0=%d\n\tbound=%s\n\tidr0=%s\n\t idr=%s\n\tr=%s indexes=%d %v",
+				len(vals0), showBBox(bound), idr0, idr, showBBox(r), len(indexes), indexes)
+			for i, o := range indexes {
+				fmt.Printf("%4d: %s\n", i, m.getRect(o))
 			}
-		}
-	}
-	if len(indexes) > 0 {
-		rl := m.asRectList(indexes)
-		r := intersectWay(way, rl...)
-		common.Log.Info("XXX: idr=%s\n\tr=%s indexes=%d %v", idr, showBBox(r), len(indexes), indexes)
-		for i, o := range indexes {
-			fmt.Printf("%4d: %s\n", i, m.getRect(o))
-		}
-		if r.Llx >= r.Urx || r.Lly >= r.Ury {
-			panic("no intersecton")
+			if r.Llx >= r.Urx || r.Lly >= r.Ury {
+				panic(fmt.Errorf("no intersecton: way=%d", way))
+			}
 		}
 	}
 	return indexes
@@ -455,10 +593,10 @@ func (m *mosaic) intersectRecursive(bound model.PdfRectangle, idr idRect, delta 
 func (m *mosaic) connectRecursive(delta float64) {
 	m.validate()
 	for i, r := range m.rects {
-		r.above = m.intersectRecursive(r.PdfRectangle, r, delta, above, r.id, 0)
-		r.left = m.intersectRecursive(r.PdfRectangle, r, delta, left, r.id, 0)
-		r.right = m.intersectRecursive(r.PdfRectangle, r, delta, right, r.id, 0)
-		r.below = m.intersectRecursive(r.PdfRectangle, r, delta, below, r.id, 0)
+		r.above = m.intersectRecursive(r, r, delta, above, r.id, 0, r.PdfRectangle)
+		r.left = m.intersectRecursive(r, r, delta, left, r.id, 0, r.PdfRectangle)
+		r.right = m.intersectRecursive(r, r, delta, right, r.id, 0, r.PdfRectangle)
+		r.below = m.intersectRecursive(r, r, delta, below, r.id, 0., r.PdfRectangle)
 
 		r.above = subtract(r.above, r.id)
 		r.left = subtract(r.left, r.id)

@@ -143,7 +143,7 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 
 	saveParams.markups = map[int]map[string]rectList{}
 
-	var pageTexts []string
+	// var pageTexts []string
 
 	if firstPage < 1 {
 		firstPage = 1
@@ -204,24 +204,38 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 
 		common.Log.Info("%d words", len(words))
 
-		bboxes := wordBBoxes(words)
-		m := createMosaic(bboxes)
-		m.connect(10.0)
+		bound, obstacles := boundedObstacles(*mbox, words)
+
+		ss := newFragmentState(bound, obstacles)
+		pageGaps := ss.scan()
+		var wideGaps rectList
+		for _, gap := range pageGaps {
+			if gap.Width() >= 10.0 {
+				wideGaps = append(wideGaps, gap)
+			}
+		}
+
+		m := createMosaic(wideGaps)
+		m.connectRecursive(0.5)
+		// m.connect(10.0)
 		common.Log.Info("m=%d", len(m.rects))
 
 		heightOrder := make([]int, len(m.rects))
 		for i := 0; i < len(m.rects); i++ {
 			heightOrder[i] = i
 		}
+
+		numVert := func(r idRect) int {
+			return len(r.above) + len(r.below)
+		}
 		sort.Slice(heightOrder, func(i, j int) bool {
 			oi, oj := heightOrder[i], heightOrder[j]
 			ri, rj := m.rects[oi], m.rects[oj]
-			hi := len(ri.above) + len(ri.below)
-			hj := len(rj.above) + len(rj.below)
+			hi, hj := numVert(ri), numVert(rj)
 			if hi != hj {
 				return hi > hj
 			}
-			return ri.id > rj.id
+			return ri.id < rj.id
 		})
 		common.Log.Info("All rects: %d", len(m.rects))
 		besti := -1
@@ -229,7 +243,7 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 		verts := make(rectList, len(m.rects))
 		for i, o := range heightOrder {
 			r := m.rects[o]
-			fmt.Printf("%4d: -- r=%s\n", i, m.rectString(r))
+			fmt.Printf("%4d: %2d -- r=%s\n", i, numVert(r), m.rectString(r))
 			vert := append(r.above, r.id)
 			vert = append(vert, r.below...)
 			rr, order := m.bestVert(vert, 5.0)
@@ -261,12 +275,14 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 			fmt.Printf("%4d: %s\n", i, showBBox(r))
 		}
 
-		r := m.rects[besti]
-		common.Log.Info("%4d: -- r=%s =====================", besti, m.rectString(r))
-		vert := append(r.above, r.id)
-		vert = append(vert, r.below...)
-		rr, order := m.bestVert(vert, 10.0)
-		fmt.Printf("bestVert=%s %v\n", showBBox(rr), order)
+		var r idRect
+		if besti >= 0 {
+			common.Log.Info("%4d: -- r=%s =====================", besti, m.rectString(r))
+			vert := append(r.above, r.id)
+			vert = append(vert, r.below...)
+			rr, order := m.bestVert(vert, 10.0)
+			fmt.Printf("bestVert=%s %v\n", showBBox(rr), order)
+		}
 		// panic("1")
 		// continue
 
@@ -276,14 +292,14 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 		}
 		// saveParams.markups[pageNum]["marks"] = group
 
-		outPageText, err := pageMarksToColumnText(pageNum, words, *mbox)
-		if err != nil {
-			common.Log.Debug("Error grouping text: %v", err)
-			return err
-		}
-		header := fmt.Sprintf("----------------\n ### PAGE %d of %d", pageNum, numPages)
-		pageTexts = append(pageTexts, header)
-		pageTexts = append(pageTexts, outPageText)
+		// outPageText, err := pageMarksToColumnText(pageNum, words, *mbox)
+		// if err != nil {
+		// 	common.Log.Debug("Error grouping text: %v", err)
+		// 	return err
+		// }
+		// header := fmt.Sprintf("----------------\n ### PAGE %d of %d", pageNum, numPages)
+		// pageTexts = append(pageTexts, header)
+		// pageTexts = append(pageTexts, outPageText)
 	}
 	// return nil
 
