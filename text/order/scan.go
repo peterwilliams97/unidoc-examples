@@ -86,6 +86,9 @@ func scanPage(pageBound model.PdfRectangle, pageGaps rectList) rectList {
 	for i, sl := range slines {
 		common.Log.Info("%2d **********  sl=%s", i, sl.String())
 		common.Log.Info("ss=%s", ss.String())
+		if sl.y <= ss.pageBound.Lly {
+			break
+		}
 		gaps = sl.updateGaps(gaps)
 		columns := perforate(ss.pageBound, gaps, sl.y)
 		common.Log.Info("%2d #########  columns=%d", i, len(columns))
@@ -159,6 +162,9 @@ func (ss *scanState) getIDRect(id int) idRect {
 	return idr
 }
 
+// perforate returns the a slice of half-open rectangles created by perforating rectangle `bound` at
+// height `y` in with rectangles `gaps`. The created rectangles have top `y`, no bottom and left and
+// right separated by `gaps`.
 func perforate(bound model.PdfRectangle, gaps []idRect, y float64) rectList {
 	if len(gaps) == 0 {
 		if bound.Lly == y {
@@ -167,14 +173,14 @@ func perforate(bound model.PdfRectangle, gaps []idRect, y float64) rectList {
 		r := bound
 		r.Ury = y
 		if !validBBox(r) {
-			common.Log.Error("bound=%s", showBBox(bound))
+			common.Log.Error("bound=%s y=%5.1f", showBBox(bound), y)
 			common.Log.Error("    r=%s", showBBox(r))
 			panic("BBox")
 		}
 		return rectList{r}
 	}
 	sortX(gaps, false)
-	checkXOverlaps(gaps)
+	// checkXOverlaps(gaps)
 
 	events := make([]xEvent, 2*len(gaps))
 	for i, r := range gaps {
@@ -203,25 +209,30 @@ func perforate(bound model.PdfRectangle, gaps []idRect, y float64) rectList {
 		}
 	}
 
-	common.Log.Info("intersectingElements y=%.1f", y)
-	common.Log.Info("   gaps=%d\n\t%s", len(gaps), gaps)
+	common.Log.Info("<< perforate y=%.1f gaps=%d", y, len(gaps))
+	// common.Log.Info("   \n\t%s", gaps)
 	llx := bound.Llx
-	inGap := false
+	depth := 0
 	for i, e := range events {
-		common.Log.Info("%3d: llx=%5.1f %s", i, llx, e)
-		if inGap == e.enter {
-			panic("gap")
+		if e.enter {
+			if depth == 0 {
+				add(llx, e.x, "A", e) //  g.Llx)
+			}
+			depth++
+		} else {
+			depth--
+			if depth == 0 {
+				llx = e.Urx
+			}
 		}
-		if e.enter && !inGap {
-			add(llx, e.x, "A", e) //  g.Llx)
+		common.Log.Info("%3d: depth=%d llx=%5.1f %s", i, depth, llx, e)
+		if depth < 0 {
+			panic("depth")
 		}
-		inGap = e.enter
-		llx = e.Urx
-		common.Log.Info("%3d: llx=%5.1f", i, llx)
 	}
 	add(llx, bound.Urx, "C", xEvent{})
 
-	common.Log.Info("intersectingElements gaps=%d", len(gaps))
+	common.Log.Info(">> perforate  gaps=%d", len(gaps))
 	for i, idr := range gaps {
 		fmt.Printf("%4d: %s\n", i, idr)
 	}
@@ -233,15 +244,17 @@ func perforate(bound model.PdfRectangle, gaps []idRect, y float64) rectList {
 	return columns1
 }
 
+// extendColumns attempts to extend `ss.running` (the current open columns) downwards with `columns`
+// the columns found at height `y`.
 func (ss *scanState) extendColumns(columns rectList, y float64) {
 	// columns.sortX()
 	sortX(ss.running, true)
 	columns.checkXOverlaps()
-	checkXOverlaps(ss.running)
+	// checkXOverlaps(ss.running)
 
 	delta := 1.0
-	contRun := map[int]struct{}{}
-	contCol := map[int]struct{}{}
+	contRun := map[int]struct{}{} // Indexes of ss.running that are continued.
+	contCol := map[int]struct{}{} // Indexes of columns that are continuations.
 	for i, c := range columns {
 		for j, r := range ss.running {
 			if math.Abs(c.Llx-r.Llx) < delta && math.Abs(c.Urx-r.Urx) < delta {
@@ -251,9 +264,9 @@ func (ss *scanState) extendColumns(columns rectList, y float64) {
 		}
 	}
 
-	var closed []idRect
-	var opened []idRect
-	var running []idRect
+	var closed []idRect  // Columsn that end here.
+	var opened []idRect  // Columns that start here.
+	var running []idRect // Columns that continue.
 	for i, r := range columns {
 		if _, ok := contCol[i]; !ok {
 			opened = append(opened, ss.newIDRect(r))
@@ -274,8 +287,8 @@ func (ss *scanState) extendColumns(columns rectList, y float64) {
 	ss.completed = append(ss.completed, closed...)
 
 	common.Log.Info("extendColumns: ss=%s", ss)
-	sortX(ss.running, true)
-	checkXOverlaps(ss.running)
+	sortX(ss.running, false)
+	// checkXOverlaps(ss.running)
 	// sortX(ss.completed, true)
 	// checkXOverlaps(ss.completed)
 }
@@ -349,7 +362,7 @@ func (sl scanLine) columnsScan(pageBound model.PdfRectangle, enter bool) (
 
 // updateGaps returns the elements of `gaps` updated by the events in `sl`.
 func (sl scanLine) updateGaps(gaps []idRect) []idRect {
-	var plus []idRect
+	plus := gaps
 	done := map[int]struct{}{}
 	for _, e := range sl.events {
 		if e.enter {
@@ -416,14 +429,16 @@ type xEvent struct {
 }
 
 func (e xEvent) String() string {
-	pos := "enter"
+	pos := "LEAVE"
 	if e.enter {
-		pos = "LEAVE"
+		pos = "enter"
 	}
 
 	return fmt.Sprintf("<%5.1f %s %d %s>", e.x, pos, e.i, e.idRect)
 }
 
+// sortX sorts `rl` by Llx then Urx. If `alreadySorted` is true then `rl` is checked to see if it is
+// alreadt sorted.
 func sortX(rl []idRect, alreadySorted bool) {
 	less := func(i, j int) bool {
 		xi, xj := rl[i].Llx, rl[j].Llx

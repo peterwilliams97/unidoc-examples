@@ -106,8 +106,17 @@ func main() {
 		panic(markupDir)
 	}
 
-	// inPath := args[0]
-	for _, inPath := range args {
+	fileList := args
+	sort.Slice(fileList, func(i, j int) bool {
+		fi, fj := fileList[i], fileList[j]
+		si, sj := fileSize(fi), fileSize(fj)
+		if si != sj {
+			return si < sj
+		}
+		return fi < fj
+	})
+
+	for _, inPath := range fileList {
 		outPath := changePath(outDir, filepath.Base(inPath), "", ".txt")
 		if strings.ToLower(filepath.Ext(outPath)) == ".pdf" {
 			panic(fmt.Errorf("output can't be PDF %q", outPath))
@@ -125,7 +134,8 @@ func main() {
 // file to `outPath`.
 func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 	common.Log.Info("extractColumnText: inPath=%q [%d:%d]->%q", inPath, firstPage, lastPage, outPath)
-	fmt.Fprintf(os.Stderr, "\n&&& inPath=%q [%d:%d]->%q\n", inPath, firstPage, lastPage, outPath)
+	fmt.Fprintf(os.Stderr, "\n&&& inPath=%q [%d:%d]->%q %.2f MB\n",
+		inPath, firstPage, lastPage, outPath, fileSize(inPath))
 	f, err := os.Open(inPath)
 	if err != nil {
 		return fmt.Errorf("Could not open %q err=%w", inPath, err)
@@ -264,10 +274,17 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 			return ri.Width() > rj.Width()
 		})
 		var talls rectList
+		sigSet := map[float64]struct{}{}
 		for _, r := range verts {
-			if r.Height() > 40.0 {
-				talls = append(talls, r)
+			if r.Height() < 40.0 {
+				continue
 			}
+			sig := partEltSig(r)
+			if _, ok := sigSet[sig]; ok {
+				continue
+			}
+			talls = append(talls, r)
+			sigSet[sig] = struct{}{}
 		}
 		saveParams.markups[pageNum]["marks"] = talls
 		common.Log.Info("<<<<verts=%4d talls=%4d  =====================", len(verts), len(talls))
@@ -283,8 +300,10 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 			rr, order := m.bestVert(vert, 10.0)
 			fmt.Printf("bestVert=%s %v\n", showBBox(rr), order)
 		}
-		// panic("1")
-		// continue
+
+		columns := scanPage(bound, talls)
+		// // columns = removeEmpty(pageBound, columns, obstacles)
+		saveParams.markups[saveParams.curPage]["columns"] = columns
 
 		group := make(rectList, textMarks.Len())
 		for i, mark := range textMarks.Elements() {
@@ -308,7 +327,7 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 	// 	return fmt.Errorf("failed to write outPath=%q err=%w", outPath, err)
 	// }
 
-	for _, markupType := range []string{"gaps", "marks", "columns"} {
+	for _, markupType := range []string{ /*"gaps",*/ "marks", "columns"} {
 		err = saveMarkedupPDF(saveParams, inPath, markupType)
 		if err != nil {
 			return fmt.Errorf("failed to save marked up pdf: %w", err)
@@ -395,4 +414,13 @@ func changePath(dirName, filename, qualifier, ext string) string {
 	path := filepath.Join(dirName, filename)
 	common.Log.Info("changePath(%q,%q,%q)->%q", dirName, base, ext, path)
 	return path
+}
+
+// fileSize returns the size of file `path` in bytes
+func fileSize(path string) float64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		panic(err)
+	}
+	return float64(fi.Size()) / 1024.0 / 1024.0
 }
