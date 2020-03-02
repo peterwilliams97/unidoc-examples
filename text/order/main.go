@@ -56,6 +56,7 @@ var saveParams saveMarkedupParams
 func main() {
 	// common.SetLogger(common.NewConsoleLogger(common.LogLevelInfo))
 	// testMosaic()
+	// testTopo()
 	var (
 		loglevel   string
 		saveMarkup string
@@ -302,13 +303,14 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 		}
 
 		columns := scanPage(bound, talls)
+		columns = sortRectList(columns)
 		// // columns = removeEmpty(pageBound, columns, obstacles)
 		saveParams.markups[saveParams.curPage]["columns"] = columns
 
-		group := make(rectList, textMarks.Len())
-		for i, mark := range textMarks.Elements() {
-			group[i] = mark.BBox
-		}
+		// group := make(rectList, textMarks.Len())
+		// for i, mark := range textMarks.Elements() {
+		// 	group[i] = mark.BBox
+		// }
 		// saveParams.markups[pageNum]["marks"] = group
 
 		// outPageText, err := pageMarksToColumnText(pageNum, words, *mbox)

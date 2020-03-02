@@ -76,3 +76,6 @@ inbetween them. There is also a lower bound on column height, both because there
 tended to be many falsely identified columns of short length, and because very short
 columns are insignificant layout-wise since they are generally correctly grouped and
 ordered anyway.
+
+
+
