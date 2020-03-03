@@ -84,6 +84,8 @@ func before2(a, b model.PdfRectangle) bool {
 	return a.Urx <= b.Llx
 }
 
+// rectListAdj creates an adjacency list for the DAG of connections over `rl`. The connections are
+//
 func rectListAdj(rl rectList) [][]bool {
 	n := len(rl)
 	adj := make([][]bool, n)
@@ -101,12 +103,18 @@ func rectListAdj(rl rectList) [][]bool {
 		for j := range rl {
 			fmt.Printf("%7t", adj[i][j])
 			if adj[i][j] && adj[j][i] {
-				panic("loop")
+				panic("cycle")
 			}
 		}
 		fmt.Printf("\n")
 	}
 	fmt.Println("-----------------------------------------------------------")
+	for _, r := range rl {
+		if before(r, r) {
+			panic(r)
+		}
+
+	}
 	return adj
 }
 

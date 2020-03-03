@@ -18,6 +18,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
@@ -129,6 +130,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	fmt.Fprintln(os.Stderr, "\n")
 }
 
 // extractColumnText extracts text columns from PDF file `inPath` and outputs the data as a text
@@ -162,6 +164,10 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 	if lastPage > numPages {
 		lastPage = numPages
 	}
+
+	var pageColumnTexts [][]string
+	var pageNumbers []int
+	var pageColumns []rectList
 
 	for pageNum := firstPage; pageNum <= lastPage; pageNum++ {
 		saveParams.curPage = pageNum
@@ -287,7 +293,8 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 			talls = append(talls, r)
 			sigSet[sig] = struct{}{}
 		}
-		saveParams.markups[pageNum]["marks"] = talls
+
+		saveParams.markups[pageNum]["gaps"] = talls
 		common.Log.Info("<<<<verts=%4d talls=%4d  =====================", len(verts), len(talls))
 		for i, r := range verts {
 			fmt.Printf("%4d: %s\n", i, showBBox(r))
@@ -302,10 +309,20 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 			fmt.Printf("bestVert=%s %v\n", showBBox(rr), order)
 		}
 
-		columns := scanPage(bound, talls)
+		cover := removeNonSeparating(bound, talls, obstacles) //!@#$
+		cover = absorbCover(bound, cover, obstacles)
+		saveParams.markups[pageNum]["space"] = cover
+
+		columns := scanPage(bound, cover)
 		columns = sortRectList(columns)
 		// // columns = removeEmpty(pageBound, columns, obstacles)
 		saveParams.markups[saveParams.curPage]["columns"] = columns
+
+		lines := identifyLines(words)
+		columnTexts := getColumnText(lines, columns)
+		pageColumnTexts = append(pageColumnTexts, columnTexts)
+		pageNumbers = append(pageNumbers, pageNum)
+		pageColumns = append(pageColumns, columns)
 
 		// group := make(rectList, textMarks.Len())
 		// for i, mark := range textMarks.Elements() {
@@ -329,11 +346,37 @@ func extractColumnText(inPath, outPath string, firstPage, lastPage int) error {
 	// 	return fmt.Errorf("failed to write outPath=%q err=%w", outPath, err)
 	// }
 
-	for _, markupType := range []string{ /*"gaps",*/ "marks", "columns"} {
+	for _, markupType := range []string{"gaps", "space", "columns"} {
 		err = saveMarkedupPDF(saveParams, inPath, markupType)
 		if err != nil {
 			return fmt.Errorf("failed to save marked up pdf: %w", err)
 		}
+	}
+
+	pageTexts := make([]string, len(pageColumnTexts))
+	for i, columnTexts := range pageColumnTexts {
+		if len(columnTexts) == 0 {
+			continue
+		}
+		for j, text := range columnTexts {
+			if len(text) == 0 {
+				continue
+			}
+			//                       ==============
+			text = fmt.Sprintf("\n -------------- "+
+				"PAGE %d of %d Column %d of %d %s\n%s",
+				pageNumbers[i], numPages, j+1, len(columnTexts), showBBox(pageColumns[i][j]), text)
+			columnTexts[j] = text
+
+		}
+		text := strings.Join(columnTexts, "\n")
+		text = fmt.Sprintf(" ============== PAGE %d of %d ==============\n%s",
+			pageNumbers[i], numPages, text)
+		pageTexts[i] = text
+	}
+	docText := strings.Join(pageTexts, "\n")
+	if err := ioutil.WriteFile(outPath, []byte(docText), 0666); err != nil {
+		return fmt.Errorf("failed to write outPath=%q err=%w", outPath, err)
 	}
 
 	return nil

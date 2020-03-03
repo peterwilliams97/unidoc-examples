@@ -88,7 +88,7 @@ func saveMarkedupPDF(params saveMarkedupParams, inPath, markupType string) error
 			lly := r.Lly + dy
 			ury := r.Ury - dy
 
-			w := width * 2
+			w := width * 1.1
 			rect := c.NewRectangle(llx+w, h-(lly+w), urx-llx-2*w, -(ury - lly - 2*w))
 			rect.SetBorderColor(bgdColor)
 			rect.SetBorderWidth(2.0 * w)
@@ -123,6 +123,7 @@ var (
 		"lines":   0.2,
 		"divs":    0.6,
 		"gaps":    0.3,
+		"space":   0.35,
 		"columns": 0.4,
 		"page":    1.1,
 	}
@@ -132,6 +133,7 @@ var (
 		"lines":   "#f0f000",
 		"divs":    "#ffff00",
 		"gaps":    "#ff0000",
+		"space":   "#00ffff",
 		"columns": "#00ff00",
 		"page":    "#00aabb",
 	}
@@ -141,6 +143,7 @@ var (
 		"lines":   "#00afaf",
 		"divs":    "#0000ff",
 		"gaps":    "#00ffff",
+		"space":   "#ff0000",
 		"columns": "#ff00ff",
 		"page":    "#ff0000",
 	}

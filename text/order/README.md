@@ -1,5 +1,21 @@
 TODO
 ====
+ChapterK.pdf p1,4,14 Need horizontal gap at bottom right
+mannetal.pdf p2 top Filters out gaps between columns
+             p4 bottom right. spurious gap
+             p5 left. gap stops halfway down page
+sunnstein.pdf p1 top middle. spurious gap
+pandemic.pdf p3 spurious gap
+
+BUGS
+===
+
+sunnstein.pdf Font widths are wrong
+
+
+
+OLD TODO
+----------
 bad gap -> gap overlaps text
 recognition.pdf p10 bad gap
 ocr.pdf         p1,2  bad gap
@@ -7,12 +23,6 @@ invoice.pdf     p2,3 bad gap
 coronaviruses.pdf p3 bad gap
 Doig.pdf        p4,11,16 bad gap
 20190716RES57231.pdf p6,15,16,17,18 bad gap
-
-
-BUGS
-===
-
-sunnstein.pdf Font widths are wrong
 
 OLD TODO
 --------
@@ -78,4 +88,4 @@ columns are insignificant layout-wise since they are generally correctly grouped
 ordered anyway.
 
 
-
+u

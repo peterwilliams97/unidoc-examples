@@ -16,7 +16,7 @@ import (
 // excludes the bounding boxes of `textMarks`
 func whitespaceCover(pageBound model.PdfRectangle, words []extractor.TextMarkArray) (
 	model.PdfRectangle, rectList, rectList) {
-	bound, obstacles :=  boundedObstacles(pageBound , words)
+	bound, obstacles := boundedObstacles(pageBound, words)
 	cover := fragmentPage(bound, obstacles, 12.0)
 	// cover := obstacleCover(bound, obstacles, maxboxes, maxoverlap, maxperim, frac, maxpops)
 	return bound, obstacles, cover
@@ -55,8 +55,6 @@ func boundedObstacles(pageBound model.PdfRectangle, words []extractor.TextMarkAr
 
 	return bound, obstacles
 }
-
-
 
 var sigObstacles map[float64]extractor.TextMarkArray
 
@@ -282,19 +280,22 @@ func removeEmpty(bound model.PdfRectangle, cover, obstacles rectList) rectList {
 // separatingRect returns true if `r` separates sufficient elements of `obstacles` (bounding boxes
 // of words). We search `width` to left and right of `r` for these elements.
 func separatingRect(r model.PdfRectangle, width float64, obstacles rectList) bool {
-	expansion := r
-	expansion.Llx -= width
-	expansion.Urx += width
-	overl := wordCount(expansion, obstacles)
-	// words := bboxWords(sigObstacles, obstacles)
-	words := bboxWords(sigObstacles, overl)
-	var texts []string
-	for _, w := range words {
-		texts = append(texts, w.Text())
-	}
-	dy := yRange(overl)
-	common.Log.Info("r=%s dy=%.1f count=%d %v", showBBox(r), dy, len(overl), texts)
-	return len(overl) > 0 && dy > width
+	expansionL := r
+	expansionL.Llx -= width
+	expansionR := r
+	expansionR.Urx += width
+	dyL := yRange(wordCount(expansionL, obstacles))
+	dyR := yRange(wordCount(expansionR, obstacles))
+
+	// if false {
+	// 	words := bboxWords(sigObstacles, overl)
+	// 	var texts []string
+	// 	for _, w := range words {
+	// 		texts = append(texts, w.Text())
+	// 	}
+	// 	common.Log.Info("r=%s dy=%.1f count=%d %v", showBBox(r), dy, len(overl), texts)
+	// }
+	return dyL > width && dyR > width
 }
 
 func accept(bound model.PdfRectangle) bool {
@@ -623,7 +624,7 @@ func wordCount(bound model.PdfRectangle, obstacles rectList) rectList {
 
 func yRange(obstacles rectList) float64 {
 	if len(obstacles) == 0 {
-		return 0
+		return -1.0
 	}
 
 	min := obstacles[0].Lly
