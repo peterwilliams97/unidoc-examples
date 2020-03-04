@@ -56,9 +56,15 @@ const (
 	companyName      = ""
 )
 
-var ( // !@#$ Centralize heuristics here.
+var (
 	saveParams saveMarkedupParams
 	doValidate = false
+
+	// !@#$ Centralize heuristics here.
+	// scan.go
+	scanWindow = 20.0 // Sliding window size in points.
+	// gapSize := charMultiplier * averageWidth(textMarks)
+	charMultiplier = 1.0
 )
 
 func main() {
@@ -173,6 +179,7 @@ func extractDocText(inPath, outPath string, firstPage, lastPage int) error {
 	var pageColumns []rectList
 
 	for pageNum := firstPage; pageNum <= lastPage; pageNum++ {
+		fmt.Fprintf(os.Stderr, "%d ", pageNum)
 		columnTexts, columns, err := getColumnsText(inPath, pdfReader, pageNum)
 		if err != nil {
 			return fmt.Errorf("getColumnsText failed. inPath=%q err=%w", inPath, err)
@@ -281,7 +288,7 @@ func getColumnsText(inPath string, pdfReader *model.PdfReader, pageNum int) ([]s
 	bound, obstacles := boundedObstacles(*mbox, words)
 
 	// `pageGaps` are the rectangles that separate words.
-	pageGaps := fragmentPage(bound, obstacles)
+	pageGaps := wordsToGaps(bound, obstacles)
 	var wideGaps rectList
 	for _, gap := range pageGaps {
 		if gap.Width() >= minGapWidth {
@@ -371,9 +378,8 @@ func getColumnsText(inPath string, pdfReader *model.PdfReader, pageNum int) ([]s
 	cover = removeUnseparated(bound, cover, obstacles)
 	saveParams.markups[pageNum]["space"] = cover
 
-	// `columns` is the rectangles enclosing text
-	// !@#$ Why do we need scanPage and fragmentPage?
-	columns := scanPage(bound, cover)
+	// `columns` is the rectangles enclosing all the text on the page.
+	columns := gapsToColumns(bound, cover)
 	for i, r := range columns {
 		if !bboxValid(r) {
 			panic(fmt.Errorf("bad bbox: i=%d of %d r=%s", i, len(columns), showBBox(r)))
