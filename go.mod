@@ -7,10 +7,12 @@ require (
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
 	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b // indirect
 	github.com/miekg/pkcs11 v1.0.2
-	github.com/unidoc/unipdf/v3 v3.4.0
+	github.com/unidoc/unipdf/v3 v3.4.1
 	github.com/wcharczuk/go-chart v2.0.1+incompatible
 	github.com/youtube/vitess v2.1.1+incompatible // indirect
 	golang.org/x/crypto v0.0.0-20190605123033-f99c8df09eb5
 )
+
+replace github.com/unidoc/unipdf/v3 v3.4.1 => github.com/peterwilliams97/unipdf/v3 v3.4.2
 
 go 1.13

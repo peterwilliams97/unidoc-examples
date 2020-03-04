@@ -65,12 +65,11 @@ var (
 	scanWindow = 20.0 // Sliding window size in points.
 	// gapSize := charMultiplier * averageWidth(textMarks)
 	charMultiplier = 1.0
+
+	minGapWidth = 10.0
 )
 
 func main() {
-	// common.SetLogger(common.NewConsoleLogger(common.LogLevelInfo))
-	// testMosaic()
-	// testTopo()
 	var (
 		loglevel  string
 		outDir    string
@@ -223,11 +222,6 @@ func extractDocText(inPath, outPath string, firstPage, lastPage int) error {
 
 	return nil
 }
-
-const (
-	// heuristics
-	minGapWidth = 10.0
-)
 
 // getColumnsText reads the content streams of (1-offset) page `pageNum` of `pdfReader` and returns
 // (columnTexts, columns, error) where

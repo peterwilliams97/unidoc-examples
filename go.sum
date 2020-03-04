@@ -14,6 +14,8 @@ github.com/gunnsth/pkcs7 v0.0.0-20181213175627-3cffc6fbfe83 h1:saj5dTV7eQ1wFg/gV
 github.com/gunnsth/pkcs7 v0.0.0-20181213175627-3cffc6fbfe83/go.mod h1:xaGEIRenAiJcGgd9p62zbiP4993KaV3PdjczwGnP50I=
 github.com/miekg/pkcs11 v1.0.2 h1:CIBkOawOtzJNE0B+EpRiUBzuVW7JEQAwdwhSS6YhIeg=
 github.com/miekg/pkcs11 v1.0.2/go.mod h1:XsNlhZGX73bx86s2hdc/FuaLm2CPZJemRLMA+WTFxgs=
+github.com/peterwilliams97/unipdf/v3 v3.4.2 h1:9jwhHliosUzDV6A4vDj5Dp0p0tU31XZoadxJfFqWemg=
+github.com/peterwilliams97/unipdf/v3 v3.4.2/go.mod h1:9UCaDgGpPiqcuuJDgc73+qoBn0uo1VRYMF8Lc1pxMns=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
@@ -25,6 +27,8 @@ github.com/unidoc/unipdf/v3 v3.1.1 h1:/emmQWTj23+oWIkIAM95R6BbhM4+wh9R5+txZBwFV5
 github.com/unidoc/unipdf/v3 v3.1.1/go.mod h1:deHLROTLv9UDHIcWQFbjcrEZ4aTwyhPXX0fvpyoZyAM=
 github.com/unidoc/unipdf/v3 v3.4.0 h1:CO9cb3XV79QyvBTEdrRHbOVjZc6c5xCX/EJP4B109xw=
 github.com/unidoc/unipdf/v3 v3.4.0/go.mod h1:deHLROTLv9UDHIcWQFbjcrEZ4aTwyhPXX0fvpyoZyAM=
+github.com/unidoc/unipdf/v3 v3.4.1 h1:v8OYUWWlB98FZoFLfha8OESKPdAapgapgGUA/8soWNk=
+github.com/unidoc/unipdf/v3 v3.4.1/go.mod h1:deHLROTLv9UDHIcWQFbjcrEZ4aTwyhPXX0fvpyoZyAM=
 github.com/wcharczuk/go-chart v2.0.1+incompatible h1:0pz39ZAycJFF7ju/1mepnk26RLVLBCWz1STcD3doU0A=
 github.com/wcharczuk/go-chart v2.0.1+incompatible/go.mod h1:PF5tmL4EIx/7Wf+hEkpCqYi5He4u90sw+0+6FhrryuE=
 github.com/youtube/vitess v2.1.1+incompatible h1:SE+P7DNX/jw5RHFs5CHRhZQjq402EJFCD33JhzQMdDw=
