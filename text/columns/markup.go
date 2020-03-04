@@ -59,7 +59,7 @@ func saveMarkedupPDF(params saveMarkedupParams, inPath, markupType string) error
 		}
 		if page.MediaBox == nil {
 			// Deal with MediaBox inherited from Parent.
-			common.Log.Info("MediaBox: %v -> %v", page.MediaBox, mediaBox)
+			common.Log.Debug("MediaBox: %v -> %v", page.MediaBox, mediaBox)
 			page.MediaBox = mediaBox
 		}
 		h := mediaBox.Ury
@@ -72,7 +72,7 @@ func saveMarkedupPDF(params saveMarkedupParams, inPath, markupType string) error
 		dx := 0.0
 		dy := 0.0
 
-		common.Log.Info("markupType=%q dx=%.1f dy=%.1f pageNum=%d", markupType, dx, dy, pageNum)
+		common.Log.Debug("markupType=%q dx=%.1f dy=%.1f pageNum=%d", markupType, dx, dy, pageNum)
 
 		width := widths[markupType]
 		borderColor := creator.ColorRGBFromHex(colors[markupType])
@@ -162,6 +162,6 @@ func markupKeys(markups map[string]rectList) []string {
 		}
 		return ki < kj
 	})
-	common.Log.Info("keys=%q", keys)
+	common.Log.Debug("keys=%q", keys)
 	return keys
 }

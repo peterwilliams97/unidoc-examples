@@ -19,86 +19,10 @@ const (
 	charMultiplier = 1.0
 )
 
-// fragmentPage scans the page vertically in ranges of `window` and looks for gaps in each scan line
-// returns the scan line in chunks separated by >= gapSize.
-func fragmentPage(pageBound model.PdfRectangle, pageWords rectList, gapSize float64) rectList {
-	if len(pageWords) == 0 {
-		return rectList{pageBound}
-	}
-	for _, r := range pageWords {
-		if r.Llx < pageBound.Llx {
-			panic("A) llx")
-		}
-		if r.Urx > pageBound.Urx {
-			panic("B) urx")
-		}
-	}
-	ss := newFragmentState(pageBound, pageWords)
-	pageGaps := ss.scan()
-	var wideGaps rectList
-	for _, gap := range pageGaps {
-		if gap.Width() >= 10.0 {
-			wideGaps = append(wideGaps, gap)
-		}
-	}
-
-	m := createMosaic(wideGaps)
-	m.connectRecursive(0.5)
-	for i, r := range m.rects {
-		fmt.Printf("%4d: -- r=%s\n", i, m.rectString(r))
-	}
-	// os.Exit(-3)
-	return wideGaps
-	// slines := ss.wordsToFragmentLines(pageWords)
-	// common.Log.Info("@@ fragmentPage: pageBound=%s", showBBox(pageBound))
-	// ss.validate()
-	// var words []idRect
-	// for i, sl := range slines {
-	// 	common.Log.Info("%2d **********  sl=%s", i, sl.String())
-	// 	common.Log.Info("ss=%s", ss.String())
-	// 	words = sl.updateWords(words)
-	// 	columns := pokeHoles(ss.pageBound, words, sl.y)
-	// 	common.Log.Info("%2d #########  columns=%d", i, len(columns))
-	// 	for j, r := range columns {
-	// 		fmt.Printf("%4d: %s\n", j, showBBox(r))
-	// 	}
-	// 	ss.extendColumns(columns, sl.y)
-	// 	common.Log.Info("ss=%s", ss.String())
-	// 	ss.validate()
-	// }
-	// // Close all the running columns.
-	// common.Log.Info("FINAL CLOSER")
-	// for i, idr := range ss.running {
-	// 	common.Log.Info("running[%d]=%s", i, idr)
-	// 	idr.Lly = pageBound.Lly
-	// 	if idr.Ury-idr.Lly > 0 {
-	// 		common.Log.Info("%4d completed[%d]=%s", i, len(ss.completed), idr)
-	// 		idr.validate()
-	// 		ss.completed = append(ss.completed, idr)
-	// 		ss.validate()
-	// 	}
-	// }
-
-	// sort.Slice(ss.completed, func(i, j int) bool {
-	// 	return ss.completed[i].id < ss.completed[j].id
-	// })
-	// common.Log.Info("fragmentPage: pageWords=%d pageBound=%5.1f", len(pageWords), pageBound)
-	// for i, c := range pageWords {
-	// 	fmt.Printf("%4d: %5.1f\n", i, c)
-	// }
-	// common.Log.Info("fragmentPage: completed=%d", len(ss.completed))
-	// for i, c := range ss.completed {
-	// 	fmt.Printf("%4d: %s\n", i, c)
-	// }
-	// columns := make(rectList, len(ss.completed))
-	// for i, c := range ss.completed {
-	// 	columns[i] = c.PdfRectangle
-	// }
-	// common.Log.Info("fragmentPage: columns=%d", len(columns))
-	// for i, c := range columns {
-	// 	fmt.Printf("%4d: %5.1f\n", i, c)
-	// }
-	// return columns
+// fragmentPage returns the gaps between `obstacles` within `bound`.
+func fragmentPage(bound model.PdfRectangle, obstacles rectList) rectList {
+	ss := newFragmentState(bound, obstacles)
+	return ss.scan()
 }
 
 type fragmentState struct {
@@ -113,10 +37,6 @@ func newFragmentState(pageBound model.PdfRectangle, pageWords rectList) *fragmen
 		words:     createMosaic(pageWords),
 		pageBound: pageBound,
 	}
-	// r := model.PdfRectangle{Llx: pageBound.Llx, Urx: pageBound.Urx, Ury: pageBound.Ury}
-	// idr := ss.newIDRect(r)
-	// ss.running = append(ss.running, idr)
-
 	return &ss
 }
 
@@ -188,29 +108,13 @@ func (sl fragmentLine) String() string {
 	return fmt.Sprintf("[y=%.1f %d %s]", sl.y, len(sl.events), strings.Join(parts, " "))
 }
 
-// fragmentEvent represents leaving or entering a rectangle while fragmentning down a page.
+// fragmentEvent represents leaving or entering a rectangle while scanning down a page.
 type fragmentEvent struct {
 	idRect
 	enter bool // true if entering, false if leaving `idRect`.
 }
 
-// func (ss *fragmentState) newIDRect(r model.PdfRectangle) idRect {
-// 	id := len(ss.store) + 1
-// 	idr := idRect{id: id, PdfRectangle: r}
-// 	idr.validate()
-// 	ss.store[id] = idr
-// 	return idr
-// }
-
-// func (ss *fragmentState) getIDRect(id int) idRect {
-// 	idr, ok := ss.store[id]
-// 	if !ok {
-// 		panic(fmt.Errorf("bad id=%d", id))
-// 	}
-// 	return idr
-// }
-
-// pokeHoles finds the gaps in a slice of words.
+// pokeHoles returns the gaps between `words` with bounding box `bound`.
 func pokeHoles(bound model.PdfRectangle, words []idRect) rectList {
 	if len(words) == 0 {
 		return rectList{bound}
@@ -248,18 +152,18 @@ func pokeHoles(bound model.PdfRectangle, words []idRect) rectList {
 			return
 		}
 		r := model.PdfRectangle{Llx: llx, Urx: urx, Lly: bound.Lly, Ury: bound.Ury}
-		common.Log.Info("\tholes[%d]=%s %q e%s", len(holes), showBBox(r), whence, e)
-		if !validBBox(r) {
+		common.Log.Debug("\tholes[%d]=%s %q e%s", len(holes), showBBox(r), whence, e)
+		if !bboxValid(r) {
 			panic("BBox")
 		}
 		holes = append(holes, r)
 	}
 
-	common.Log.Info("   words=%d bound=%s", len(words), showBBox(bound))
+	common.Log.Debug("   words=%d bound=%s", len(words), showBBox(bound))
 	llx := bound.Llx
 	depth := 0
 	for i, e := range events {
-		common.Log.Info("%3d: llx=%5.1f %s depth=%d", i, llx, e, depth)
+		common.Log.Debug("%3d: llx=%5.1f %s depth=%d", i, llx, e, depth)
 		if llx > bound.Urx {
 			panic(fmt.Errorf("i=%d llx=%5.1f  bound=%s", i, llx, showBBox(bound)))
 		}
@@ -284,103 +188,19 @@ func pokeHoles(bound model.PdfRectangle, words []idRect) rectList {
 		panic("depth end")
 	}
 
-	common.Log.Info("pokeHoles words=%d", len(words))
-	for i, idr := range words {
-		fmt.Printf("%4d: %s\n", i, idr)
-	}
-	common.Log.Info("pokeHoles holes=%d", len(holes))
-	for i, idr := range holes {
-		fmt.Printf("%4d: %s\n", i, showBBox(idr))
+	if common.Log.IsLogLevel(common.LogLevelDebug) {
+		common.Log.Debug("pokeHoles words=%d", len(words))
+		for i, idr := range words {
+			fmt.Printf("%4d: %s\n", i, idr)
+		}
+		common.Log.Debug("pokeHoles holes=%d", len(holes))
+		for i, idr := range holes {
+			fmt.Printf("%4d: %s\n", i, showBBox(idr))
+		}
 	}
 
 	return holes
 }
-
-// func (ss *fragmentState) extendColumns(columns rectList, y float64) {
-// 	// columns.sortHor()
-// 	sortHor(ss.running, true)
-// 	columns.checkXOverlaps()
-// 	checkXOverlaps(ss.running)
-
-// 	delta := 1.0
-// 	contRun := map[int]struct{}{}
-// 	contCol := map[int]struct{}{}
-// 	for i, c := range columns {
-// 		for j, r := range ss.running {
-// 			if math.Abs(c.Llx-r.Llx) < delta && math.Abs(c.Urx-r.Urx) < delta {
-// 				contCol[i] = struct{}{}
-// 				contRun[j] = struct{}{}
-// 			}
-// 		}
-// 	}
-
-// 	var closed []idRect
-// 	var opened []idRect
-// 	var running []idRect
-// 	for i, r := range columns {
-// 		if _, ok := contCol[i]; !ok {
-// 			opened = append(opened, ss.newIDRect(r))
-// 		}
-// 	}
-// 	for i, idr := range ss.running {
-// 		if _, ok := contRun[i]; !ok {
-// 			if y < idr.Ury {
-// 				idr.Lly = y
-// 				closed = append(closed, idr)
-// 			}
-// 		} else {
-// 			running = append(running, idr)
-// 		}
-// 	}
-
-// 	ss.running = append(running, opened...)
-// 	ss.completed = append(ss.completed, closed...)
-
-// 	common.Log.Info("extendColumns: ss=%s", ss)
-// 	sortHor(ss.running, true)
-// 	checkXOverlaps(ss.running)
-// 	// sortHor(ss.completed, true)
-// 	// checkXOverlaps(ss.completed)
-// }
-
-// // wordsToFragmentLines creates the list of fragment lines corresponding to words `pageWords`.
-// func (ss *fragmentState) wordsToFragmentLines(pageWords rectList) []fragmentLine {
-// 	events := make([]fragmentEvent, 2*len(pageWords))
-// 	for i, word := range pageWords {
-// 		idr := ss.newIDRect(word)
-// 		events[2*i] = fragmentEvent{enter: true, idRect: idr}
-// 		events[2*i+1] = fragmentEvent{enter: false, idRect: idr}
-// 	}
-// 	sort.Slice(events, func(i, j int) bool {
-// 		ei, ej := events[i], events[j]
-// 		yi, yj := ei.y(), ej.y()
-// 		if yi != yj {
-// 			return yi > yj
-// 		}
-// 		if ei.enter != ej.enter {
-// 			return ei.enter
-// 		}
-// 		return ei.Llx < ej.Llx
-// 	})
-
-// 	var slines []fragmentLine
-// 	e := events[0]
-// 	sl := fragmentLine{y: e.y(), events: []fragmentEvent{e}}
-// 	sl.checkXOverlaps()
-// 	common.Log.Info("! %2d of %d: %s", 1, len(events), e)
-// 	for i, e := range events[1:] {
-// 		common.Log.Info("! %2d of %d: %s", i+2, len(events), e)
-// 		if e.y() > sl.y-1.0 {
-// 			sl.events = append(sl.events, e)
-// 			// sl.checkXOverlaps()
-// 		} else {
-// 			slines = append(slines, sl)
-// 			sl = fragmentLine{y: e.y(), events: []fragmentEvent{e}}
-// 		}
-// 	}
-// 	slines = append(slines, sl)
-// 	return slines
-// }
 
 func (sl fragmentLine) columnsFragment(pageBound model.PdfRectangle, enter bool) (
 	opened, closed rectList) {
@@ -483,7 +303,6 @@ func (e horEvent) String() string {
 	if e.enter {
 		pos = "ENTER"
 	}
-
 	return fmt.Sprintf("<%5.1f %s %d %s>", e.x, pos, e.i, e.idRect)
 }
 

@@ -10,20 +10,19 @@ import (
 	"github.com/unidoc/unipdf/v3/model"
 )
 
-func lineBBox(line []extractor.TextMarkArray) model.PdfRectangle {
-	bboxes := wordBBoxes(line)
-	return rectList(bboxes).union()
-}
-
+// wordBBoxes returns the bounding boxes of the elements of `words`,
 func wordBBoxes(words []extractor.TextMarkArray) rectList {
 	bboxes := make(rectList, 0, len(words))
 	for i, w := range words {
 		r, ok := w.BBox()
-		if !ok {
+		if !ok { // Should never happen
 			panic("bbox")
 		}
-		if !validBBox(r) {
-			panic(fmt.Errorf("bad words[%d]=%s\n -- %s", i, w, showBBox(r)))
+		if !bboxValid(r) { // Indicates problem in font code. !@#$
+			common.Log.Error("bad words[%d]=%s -- %s", i, w, showBBox(r))
+			if !bboxEmpty(r) { // Should never happen
+				panic(fmt.Errorf("bad words[%d]=%s\n -- %s", i, w, showBBox(r)))
+			}
 		}
 		bboxes = append(bboxes, r)
 	}
@@ -54,27 +53,6 @@ func bboxWords(sigWord map[float64]extractor.TextMarkArray, bboxes rectList) []e
 		words[i] = w
 	}
 	return words
-}
-
-func mergeXBboxes(bboxes rectList) rectList {
-	merged := make(rectList, 0, len(bboxes))
-	merged = append(merged, bboxes[0])
-	for _, b := range bboxes[1:] {
-		numOverlaps := 0
-		for j, m := range merged {
-			if overlappedX(b, m) {
-				merged[j] = rectUnion(b, m)
-				numOverlaps++
-			}
-		}
-		if numOverlaps == 0 {
-			merged = append(merged, b)
-		}
-	}
-	if len(merged) < len(bboxes) {
-		common.Log.Info("EEEEE")
-	}
-	return merged
 }
 
 // overlappedX returns true if `r0` and `r1` overlap on the x-axis. !@#$ There is another version
@@ -134,34 +112,54 @@ func idRectsToRectList(gaps []idRect) rectList {
 	return rl
 }
 
-// bboxArea returns the area of `bbox`.
-func bboxArea(bbox model.PdfRectangle) float64 {
-	return math.Abs(bbox.Urx-bbox.Llx) * math.Abs(bbox.Ury-bbox.Lly)
+// bboxArea returns the area of `r`.
+func bboxArea(r model.PdfRectangle) float64 {
+	return math.Abs(r.Urx-r.Llx) * math.Abs(r.Ury-r.Lly)
 }
 
-// bboxCenter returns coordinates the center of `bbox`.
-func bboxCenter(bbox model.PdfRectangle) (float64, float64) {
-	cx := (bbox.Llx + bbox.Urx) / 2.0
-	cy := (bbox.Lly + bbox.Ury) / 2.0
-	// common.Log.Info("&&&& %5.1f -> %5.1f %5.1f", bbox, cx, cy)
+// bboxCenter returns coordinates the center of `r`.
+func bboxCenter(r model.PdfRectangle) (float64, float64) {
+	cx := (r.Llx + r.Urx) / 2.0
+	cy := (r.Lly + r.Ury) / 2.0
 	return cx, cy
 }
 
-// bboxPerim returns the half perimeter of `bbox`.
-func bboxPerim(bbox model.PdfRectangle) float64 {
-	return bbox.Width() + bbox.Height()
+// bboxPerim returns the half perimeter of `r`.
+func bboxPerim(r model.PdfRectangle) float64 {
+	return r.Width() + r.Height()
 }
 
-// bboxWidth returns the width of `bbox`.
-func bboxWidth(bbox model.PdfRectangle) float64 {
-	return bbox.Width()
-	return math.Abs(bbox.Urx - bbox.Llx)
+// bboxWidth returns the width of `r`.
+func bboxWidth(r model.PdfRectangle) float64 {
+	return r.Width()
 }
 
-// bboxHeight returns the height of `bbox`.
-func bboxHeight(bbox model.PdfRectangle) float64 {
-	return bbox.Height()
-	return math.Abs(bbox.Ury - bbox.Lly)
+// bboxHeight returns the height of `r`.
+func bboxHeight(r model.PdfRectangle) float64 {
+	return r.Height()
+}
+
+// bboxEmpty returns true if `r` has an area of exaclty zero.
+func bboxEmpty(r model.PdfRectangle) bool {
+	return r.Urx <= r.Llx || r.Ury <= r.Lly
+}
+
+// bboxValid returns true if `r` is a valid bounding box.
+// A bounding box is valid if has a non-zero area.
+func bboxValid(r model.PdfRectangle) bool {
+	return r.Llx < r.Urx && r.Lly < r.Ury
+}
+
+// showBBox returns a string describing `r`.
+func showBBox(r model.PdfRectangle) string {
+	w := r.Urx - r.Llx
+	h := r.Ury - r.Lly
+	return fmt.Sprintf("%5.1f %5.1fx%5.1f", r, w, h)
+}
+
+// equalBBoxes returns true if `r0` and `r1` are the same.
+func equalBBoxes(r0, r1 model.PdfRectangle) bool {
+	return r0.Llx == r1.Llx && r0.Urx == r1.Urx && r0.Lly == r1.Lly && r0.Ury == r1.Ury
 }
 
 type rectList []model.PdfRectangle
@@ -214,14 +212,14 @@ func (rl rectList) union() model.PdfRectangle {
 
 // intersects returns the elements of `rl` that intersect `bound`.
 func (rl rectList) intersects(bound model.PdfRectangle) rectList {
-	if len(rl) == 0 || !validBBox(bound) {
+	if len(rl) == 0 || !bboxValid(bound) {
 		panic("intersects n==0")
 		return nil
 	}
 
 	var intersecting rectList
 	for _, r := range rl {
-		if !validBBox(r) {
+		if !bboxValid(r) {
 			continue
 		}
 		if intersects(bound, r) {
@@ -262,7 +260,7 @@ func intersectionSignificant(bound model.PdfRectangle, cover rectList, maxoverla
 
 // intersectionFraction the ratio of area of intersecton of `r0` and `r1` and the area of `r1`.
 func intersectionFraction(r0, r1 model.PdfRectangle) float64 {
-	if !(validBBox(r0) && validBBox(r1)) {
+	if !(bboxValid(r0) && bboxValid(r1)) {
 		common.Log.Error("boxes not both valid r0=%+r r1=%+r", r0, r1)
 		return 0
 	}
@@ -289,7 +287,7 @@ func geometricIntersection(r0, r1 model.PdfRectangle) (model.PdfRectangle, bool)
 }
 
 // horizontalIntersection returns a rectangle that is the horizontal intersection and vertical union
-// of `r0` and `r1`.
+// of `r0` and `r1`. !@#$
 func horizontalIntersection(r0, r1 model.PdfRectangle) model.PdfRectangle {
 	r := model.PdfRectangle{
 		Llx: math.Max(r0.Llx, r1.Llx),
@@ -297,41 +295,37 @@ func horizontalIntersection(r0, r1 model.PdfRectangle) model.PdfRectangle {
 		Lly: math.Min(r0.Lly, r1.Lly),
 		Ury: math.Max(r0.Ury, r1.Ury),
 	}
+	if !bboxValid(r) {
+		panic(fmt.Errorf("horizontalIntersection bad bbox\n\t%s &\n\t%s ->\n\t%s",
+			showBBox(r0), showBBox(r1), showBBox(r)))
+	}
 	if r.Llx >= r.Urx || r.Lly >= r.Ury {
 		return model.PdfRectangle{}
+	}
+	rx := intersectUnion(vertical, r0, r1)
+	if !equalBBoxes(r, rx) {
+		panic("rr")
 	}
 	return r
 }
 
+// intersects returns true if `r0` and `r1` overlap in the x and y axes.
 func intersects(r0, r1 model.PdfRectangle) bool {
 	return intersectsX(r0, r1) && intersectsY(r0, r1)
 }
 
+// intersectsX returns true if `r0` and `r1` overlap in the x axis.
 func intersectsX(r0, r1 model.PdfRectangle) bool {
 	return r0.Urx >= r1.Llx && r1.Urx >= r0.Llx
 }
 
+// intersectsY returns true if `r0` and `r1` overlap in the y axis.
 func intersectsY(r0, r1 model.PdfRectangle) bool {
 	return r0.Ury >= r1.Lly && r1.Ury >= r0.Lly
 }
 
-func validBBox(r model.PdfRectangle) bool {
-	return r.Llx <= r.Urx && r.Lly <= r.Ury
-}
-
-func showBBox(r model.PdfRectangle) string {
-	w := r.Urx - r.Llx
-	h := r.Ury - r.Lly
-	return fmt.Sprintf("%5.1f %5.1fx%5.1f", r, w, h)
-	// return fmt.Sprintf("%5.1f %5.1fx%5.1f=%5.1f", r, w, h, partEltQuality(r))
-}
-
-func same(x0, x1 float64) bool {
-	const TOL = 0.1
-	return math.Abs(x0-x1) < TOL
-}
-
-func sliceIntersection(slc0, slc1 []int) []int {
+// intersectSlices returns the elements that are in both `slc0` and `slc1`,
+func intersectSlices(slc0, slc1 []int) []int {
 	m := map[int]struct{}{}
 	for _, i := range slc1 {
 		m[i] = struct{}{}
@@ -343,4 +337,47 @@ func sliceIntersection(slc0, slc1 []int) []int {
 		}
 	}
 	return isect
+}
+
+// areaOverlap returns a measure of the difference between areas of `bbox1` and `bbox2` individually
+// and that of the union of the two.
+func areaOverlap(bbox1, bbox2 model.PdfRectangle) float64 {
+	return calcOverlap(bbox1, bbox2, bboxArea)
+}
+
+// lineOverlap returns the vertical overlap of `bbox1` and `bbox2`.
+// a-b is the difference in width of the boxes as they are on
+//	overlap=0: boxes are touching
+//	overlap<0: boxes are overlapping
+//	overlap>0: boxes are separated
+func lineOverlap(bbox1, bbox2 model.PdfRectangle) float64 {
+	return calcOverlap(bbox1, bbox2, bboxHeight)
+}
+
+// columnOverlap returns the horizontal overlap of `bbox1` and `bbox2`.
+//	overlap=0: boxes are touching
+//	overlap<0: boxes are overlapping
+//	overlap>0: boxes are separated
+func columnOverlap(bbox1, bbox2 model.PdfRectangle) float64 {
+	return calcOverlap(bbox1, bbox2, bboxWidth)
+}
+
+// calcOverlap returns the horizontal overlap of `bbox1` and `bbox2` for metric `metric`.
+//	overlap=0: boxes are touching
+//	overlap<0: boxes are overlapping
+//	overlap>0: boxes are separated
+func calcOverlap(bbox1, bbox2 model.PdfRectangle, metric func(model.PdfRectangle) float64) float64 {
+	a := metric(rectUnion(bbox1, bbox2))
+	b := metric(bbox1) + metric(bbox2)
+	return (a - b) / (a + b)
+}
+
+// rectUnion returns the union of rectilinear rectangles `b1` and `b2`.
+func rectUnion(b1, b2 model.PdfRectangle) model.PdfRectangle {
+	return model.PdfRectangle{
+		Llx: math.Min(b1.Llx, b2.Llx),
+		Lly: math.Min(b1.Lly, b2.Lly),
+		Urx: math.Max(b1.Urx, b2.Urx),
+		Ury: math.Max(b1.Ury, b2.Ury),
+	}
 }

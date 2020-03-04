@@ -75,6 +75,9 @@ type scanEvent struct {
 
 // scanPage returns the rectangles in `pageBound` that are separated by `pageGaps`.
 func scanPage(pageBound model.PdfRectangle, pageGaps rectList) rectList {
+	if !bboxValid(pageBound) {
+		panic(fmt.Errorf("bad pageBound: %s", showBBox(pageBound)))
+	}
 	if len(pageGaps) == 0 {
 		return rectList{pageBound}
 	}
@@ -84,28 +87,28 @@ func scanPage(pageBound model.PdfRectangle, pageGaps rectList) rectList {
 	ss.validate()
 	var gaps []idRect
 	for i, sl := range slines {
-		common.Log.Info("%2d **********  sl=%s", i, sl.String())
-		common.Log.Info("ss=%s", ss.String())
+		common.Log.Debug("%2d **********  sl=%s", i, sl.String())
+		common.Log.Debug("ss=%s", ss.String())
 		if sl.y <= ss.pageBound.Lly {
 			break
 		}
 		gaps = sl.updateGaps(gaps)
 		columns := perforate(ss.pageBound, gaps, sl.y)
-		common.Log.Info("%2d #########  columns=%d", i, len(columns))
+		common.Log.Debug("%2d #########  columns=%d", i, len(columns))
 		for j, r := range columns {
 			fmt.Printf("%4d: %s\n", j, showBBox(r))
 		}
 		ss.extendColumns(columns, sl.y)
-		common.Log.Info("ss=%s", ss.String())
+		common.Log.Debug("ss=%s", ss.String())
 		ss.validate()
 	}
 	// Close all the running columns.
-	common.Log.Info("FINAL CLOSER")
+	common.Log.Debug("FINAL CLOSER")
 	for i, idr := range ss.running {
-		common.Log.Info("running[%d]=%s", i, idr)
+		common.Log.Debug("running[%d]=%s", i, idr)
 		idr.Lly = pageBound.Lly
 		if idr.Ury-idr.Lly > 0 {
-			common.Log.Info("%4d completed[%d]=%s", i, len(ss.completed), idr)
+			common.Log.Debug("%4d completed[%d]=%s", i, len(ss.completed), idr)
 			idr.validate()
 			ss.completed = append(ss.completed, idr)
 			ss.validate()
@@ -115,21 +118,27 @@ func scanPage(pageBound model.PdfRectangle, pageGaps rectList) rectList {
 	sort.Slice(ss.completed, func(i, j int) bool {
 		return ss.completed[i].id < ss.completed[j].id
 	})
-	common.Log.Info("scanPage: pageGaps=%d pageBound=%5.1f", len(pageGaps), pageBound)
+	common.Log.Debug("scanPage: pageGaps=%d pageBound=%5.1f", len(pageGaps), pageBound)
 	for i, c := range pageGaps {
 		fmt.Printf("%4d: %5.1f\n", i, c)
 	}
-	common.Log.Info("scanPage: completed=%d", len(ss.completed))
+	common.Log.Debug("scanPage: completed=%d", len(ss.completed))
 	for i, c := range ss.completed {
 		fmt.Printf("%4d: %s\n", i, c)
 	}
 	columns := make(rectList, len(ss.completed))
 	for i, c := range ss.completed {
+		if bboxEmpty(c.PdfRectangle) {
+			panic(fmt.Errorf("bad bbox: i=%d c=%s", i, c))
+		}
 		columns[i] = c.PdfRectangle
 	}
-	common.Log.Info("scanPage: columns=%d", len(columns))
+	common.Log.Debug("scanPage: columns=%d", len(columns))
 	for i, c := range columns {
 		fmt.Printf("%4d: %5.1f\n", i, c)
+		if bboxEmpty(c) {
+			panic(fmt.Errorf("bad bbox: i=%d c=%s", i, showBBox(c)))
+		}
 	}
 	return columns
 }
@@ -172,7 +181,7 @@ func perforate(bound model.PdfRectangle, gaps []idRect, y float64) rectList {
 		}
 		r := bound
 		r.Ury = y
-		if !validBBox(r) {
+		if !bboxValid(r) {
 			common.Log.Error("bound=%s y=%5.1f", showBBox(bound), y)
 			common.Log.Error("    r=%s", showBBox(r))
 			panic("BBox")
@@ -201,16 +210,15 @@ func perforate(bound model.PdfRectangle, gaps []idRect, y float64) rectList {
 	add := func(llx, urx float64, whence string, e xEvent) {
 		if urx > llx {
 			r := model.PdfRectangle{Llx: llx, Urx: urx, Ury: y}
-			common.Log.Info("\tcolumns1[%d]=%s %q %s", len(columns1), showBBox(r), whence, e)
-			if !validBBox(r) {
+			common.Log.Debug("\tcolumns1[%d]=%s %q %s", len(columns1), showBBox(r), whence, e)
+			if !bboxValid(r) {
 				panic("BBox")
 			}
 			columns1 = append(columns1, r)
 		}
 	}
 
-	common.Log.Info("<< perforate y=%.1f gaps=%d", y, len(gaps))
-	// common.Log.Info("   \n\t%s", gaps)
+	common.Log.Debug("<< perforate y=%.1f gaps=%d", y, len(gaps))
 	llx := bound.Llx
 	depth := 0
 	for i, e := range events {
@@ -225,18 +233,18 @@ func perforate(bound model.PdfRectangle, gaps []idRect, y float64) rectList {
 				llx = e.Urx
 			}
 		}
-		common.Log.Info("%3d: depth=%d llx=%5.1f %s", i, depth, llx, e)
+		common.Log.Debug("%3d: depth=%d llx=%5.1f %s", i, depth, llx, e)
 		if depth < 0 {
 			panic("depth")
 		}
 	}
 	add(llx, bound.Urx, "C", xEvent{})
 
-	common.Log.Info(">> perforate  gaps=%d", len(gaps))
+	common.Log.Debug(">> perforate  gaps=%d", len(gaps))
 	for i, idr := range gaps {
 		fmt.Printf("%4d: %s\n", i, idr)
 	}
-	common.Log.Info("intersectingElements columns1=%d", len(columns1))
+	common.Log.Debug("perforate columns1=%d", len(columns1))
 	for i, idr := range columns1 {
 		fmt.Printf("%4d: %s\n", i, showBBox(idr))
 	}
@@ -286,7 +294,7 @@ func (ss *scanState) extendColumns(columns rectList, y float64) {
 	ss.running = append(running, opened...)
 	ss.completed = append(ss.completed, closed...)
 
-	common.Log.Info("extendColumns: ss=%s", ss)
+	common.Log.Debug("extendColumns: ss=%s", ss)
 	sortX(ss.running, false)
 	// checkXOverlaps(ss.running)
 	// sortX(ss.completed, true)
@@ -317,9 +325,9 @@ func (ss *scanState) gapsToScanLines(pageGaps rectList) []scanLine {
 	e := events[0]
 	sl := scanLine{y: e.y(), events: []scanEvent{e}}
 	sl.checkXOverlaps()
-	common.Log.Info("! %2d of %d: %s", 1, len(events), e)
+	common.Log.Debug("! %2d of %d: %s", 1, len(events), e)
 	for i, e := range events[1:] {
-		common.Log.Info("! %2d of %d: %s", i+2, len(events), e)
+		common.Log.Debug("! %2d of %d: %s", i+2, len(events), e)
 		if e.y() > sl.y-1.0 {
 			sl.events = append(sl.events, e)
 			// sl.checkXOverlaps()
