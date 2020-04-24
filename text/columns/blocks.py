@@ -89,6 +89,11 @@ def showLines(header, lines):
 	lines = [header, line0] + lines + [line1]
 	return '\n'.join(lines)
 
+
+TOL = 0.1
+def equal(x1, x2):
+	return abs(x1 - x2) < TOL
+
 n = min(len(blocks1), len(blocks2))
 
 for i in range(n):
@@ -107,10 +112,10 @@ for i in range(n):
 		msg = 'j=%d\n\tblk1=%s\n\tblk2=%s\nlines1=\n%s\nlines2=\n%s' % (j, 
 				blk1[j], blk2[j], showLines(header1, lines1), showLines(header2,lines2))
 		# print('line %2d: %s' % (j, msg))
-		assert llx1 == llx2, msg
-		assert urx1 == urx2, msg
+		assert equal(llx1, llx2), msg
+		assert equal(urx1, urx2), msg
 		# assert lly1 == lly2, msg
 		# assert ury1 == ury2, msg
-		assert base1 == base2, msg
+		assert equal(base1, base2), msg
 		assert text1 == text2, msg
 
