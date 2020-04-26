@@ -12,10 +12,9 @@ reBlock = re.compile(r'block\s+(\d+):+\s+rot=(\d+)\s+\{\s*(\S+)\s+(\S+)\s+(\S+)\
 lineBlock = 'block 0: rot=0 {54.00 91.85 697.92 755.88} col=0 nCols=0 lines=1'
 assert reBlock.search(lineBlock)
 
-# 0: {404.76 483.00 655.20 664.20} base=136.80 "Kagan, Elena (1960-)"
-reLine = re.compile(r'line\s+(\d+)\s*:\s*\{\s*(\S+)\s+(\S+)\s+(\S+)\s*(\S+)\s*\}\s*base=(\S+)\s*"(.*)"')
-
-lineLine = '  line 0: {54.0 91.8 697.9 755.9} base=94.08 "K"'
+# line 0: base=120.24 {42.52 422.51 670.63 694.63} fontSize=24.00 "How people decide what they want to"
+reLine = re.compile(r'line\s+(\d+)\s*:\s*base=(\S+)\s*\{\s*(\S+)\s+(\S+)\s+(\S+)\s*(\S+)\s*\}\s*fontSize=(\S+)\s*"(.*)"')
+lineLine = '  line 0: base=120.24 {42.52 422.51 670.63 694.63} fontSize=24.00 "How people decide what they want to"'
 assert reLine.search(lineLine)
 
 def parseBlock(line):
@@ -65,6 +64,7 @@ def scan(path):
 			if state == 0:
 				m = reBlkList.search(line)
 				if m:
+					titleLine = line
 					title = m.group(1)
 					nBlocks = int(m.group(2))
 					blocks = []
@@ -93,13 +93,17 @@ def scan(path):
 			# 	print('state=%d->%d: %s' % (oldState, state, line))	
 			# 	oldState = state
 			
-	return blocks
+	assert nBlocks == len(blocks)
+	return title, titleLine, blocks
 
 
-blocks1 = scan(argv[1])
-blocks2 = scan(argv[2])
-print('%s %d blocks' % (argv[1], len(blocks1)))
-print('%s %d blocks' % (argv[2], len(blocks2)))
+title1, titleLine1, blocks1 = scan(argv[1])
+title2, titleLine2, blocks2 = scan(argv[2])
+print('%s %d blocks "%s"' % (argv[1], len(blocks1), title1))
+print('%s %d blocks "%s"' % (argv[2], len(blocks2), title1))
+msg = "\n\t >>%s<<\n\t >>%s<<" % (titleLine1, titleLine2)
+assert title1 == title2, msg
+assert len(blocks1) == len(blocks2), msg
 
 
 def showLines(header, lines):
@@ -126,7 +130,7 @@ for i in range(n):
 	# blk2=[0, 0, 54.0, 91.85, 36.0, 114.95, 1, 'block 0: rot=0 {54.00 91.85 36.00 114.95} col=0 nCols=1 lines=1']
 	idx1, rot1, llx1, urx1, lly1, ury1, nLines1, line1 = blk1 
 	idx2, rot2, llx2, urx2, lly2, ury2, nLines2, line2 = blk2
-	msg = '\n\t%s - %s\n\t%s - %s' % (blk1, line1, blk2, line2)
+	msg = '\n\t%s - >>%s<<\n\t%s - >>%s<<' % (blk1, line1, blk2, line2)
 	assert idx1 == idx2, msg
 	assert llx1 == llx2, msg
 	assert urx1 == urx2, msg
