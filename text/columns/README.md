@@ -1,5 +1,19 @@
 TODO
 ====
+
+pioneer.pdf       Heading order
+king.pdf          Heading order  Mary-Clair King '67
+we-dms            Paragraph internals
+rococo.pdf        Paragraph order
+sunstein.pdf      Ordering in general
+coronaviruses.pdf Ordering in general
+sheep_dogs.pdf    Paragraph order
+security.pdf      JUnk characters
+mannetal.pdf      Paragraph order
+knime.pdf         Paragraph order
+
+OLD
+---
 ChapterK.pdf p1,4,14 Need horizontal gap at bottom right
 mannetal.pdf p2 top Filters out gaps between columns
              p4 bottom right. spurious gap
