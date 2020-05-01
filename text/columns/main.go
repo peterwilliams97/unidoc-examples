@@ -25,6 +25,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"sort"
 	"strings"
 
@@ -70,6 +71,48 @@ var (
 )
 
 func main() {
+
+	f, err := os.Create("cpu.profile")
+	if err != nil {
+		panic(fmt.Errorf("could not create CPU profile: ", err))
+	}
+	defer f.Close() // error handling omitted for example
+	if err := pprof.StartCPUProfile(f); err != nil {
+		panic(fmt.Errorf("could not start CPU profile: ", err))
+	}
+	defer pprof.StopCPUProfile()
+	myMain()
+	fmt.Fprintf(os.Stderr, "DOEN\n")
+}
+
+var numSeen = 0
+
+func ignoreFile(inPath string) bool {
+	ignored := []string{
+		"b1.pdf",
+		"ChapterK.pdf",
+		"CovidEconomics3.pdf",
+		"diversity.pdf",
+		"fontline.pdf",
+		"recognition.pdf",
+		"survey.pdf",
+		"Yamashita2018_Article_ConvolutionalNeuralNetworksAnO.pdf",
+	}
+	found := false
+	for _, fn := range ignored {
+		if filepath.Base(inPath) == fn {
+			numSeen++
+			found = true
+			// return true
+		}
+
+	}
+	return numSeen < len(ignored) || found
+
+	return false
+}
+
+func myMain() {
 	var (
 		loglevel  string
 		outDir    string
@@ -99,6 +142,7 @@ func main() {
 	default:
 		common.SetLogger(common.NewConsoleLogger(common.LogLevelInfo))
 	}
+	// common.SetLogger(common.NewConsoleLogger(common.LogLevelError))
 
 	if uniDocLicenseKey != "" {
 		if err := license.SetLicenseKey(uniDocLicenseKey, companyName); err != nil {
@@ -121,7 +165,9 @@ func main() {
 	fileList := args
 	sort.Slice(fileList, func(i, j int) bool {
 		fi, fj := fileList[i], fileList[j]
-		si, sj := fileSize(fi), fileSize(fj)
+		// si, sj := fileSize(fi), fileSize(fj)
+		si := strings.ToLower(fi)
+		sj := strings.ToLower(fj)
 		if si != sj {
 			return si < sj
 		}
@@ -129,6 +175,9 @@ func main() {
 	})
 
 	for _, inPath := range fileList {
+		if len(fileList) > 1 && ignoreFile(inPath) {
+			continue
+		}
 		outPath := changePath(outDir, filepath.Base(inPath), "", ".txt")
 		if strings.ToLower(filepath.Ext(outPath)) == ".pdf" {
 			panic(fmt.Errorf("output can't be PDF %q", outPath))
@@ -173,54 +222,102 @@ func extractDocText(inPath, outPath string, firstPage, lastPage int) error {
 		lastPage = numPages
 	}
 
-	var pageColumnTexts [][]string
-	var pageNumbers []int
-	var pageColumns []rectList
+	// var pageColumnTexts [][]string
+	// var pageNumbers []int
+	// var pageColumns []rectList
+	var pageTexts []string
 
 	for pageNum := firstPage; pageNum <= lastPage; pageNum++ {
 		fmt.Fprintf(os.Stderr, "%d ", pageNum)
-		columnTexts, columns, err := getColumnsText(inPath, pdfReader, pageNum)
+		text, err := getPageText(inPath, pdfReader, pageNum)
+		// columnTexts, columns, err := getColumnsText(inPath, pdfReader, pageNum)
 		if err != nil {
 			return fmt.Errorf("getColumnsText failed. inPath=%q err=%w", inPath, err)
 		}
-		pageColumnTexts = append(pageColumnTexts, columnTexts)
-		pageNumbers = append(pageNumbers, pageNum)
-		pageColumns = append(pageColumns, columns)
-	}
-	for _, markupType := range []string{"gaps", "space", "columns"} {
-		err = saveMarkedupPDF(saveParams, inPath, markupType)
-		if err != nil {
-			return fmt.Errorf("failed to save marked up pdf inPath=%q err=%w", inPath, err)
-		}
-	}
+		// text = fmt.Sprintf(" ============== PAGE %d of %d ==============\n%s",
+		// 	pageNum, numPages, text)
+		pageTexts = append(pageTexts, text)
 
-	pageTexts := make([]string, len(pageColumnTexts))
-	for i, columnTexts := range pageColumnTexts {
-		if len(columnTexts) == 0 {
-			continue
-		}
-		for j, text := range columnTexts {
-			if len(text) == 0 {
-				continue
-			}
-			text = fmt.Sprintf("\n -------------- "+
-				"PAGE %d of %d Column %d of %d %s\n%s",
-				pageNumbers[i], numPages, j+1, len(columnTexts), showBBox(pageColumns[i][j]), text)
-			columnTexts[j] = text
-
-		}
-		text := strings.Join(columnTexts, "\n")
-		text = fmt.Sprintf(" ============== PAGE %d of %d ==============\n%s",
-			pageNumbers[i], numPages, text)
-		pageTexts[i] = text
+		// pageColumnTexts = append(pageColumnTexts, columnTexts)
+		// pageNumbers = append(pageNumbers, pageNum)
+		// pageColumns = append(pageColumns, columns)
 	}
+	// for _, markupType := range []string{"gaps", "space", "columns"} {
+	// 	err = saveMarkedupPDF(saveParams, inPath, markupType)
+	// 	if err != nil {
+	// 		return fmt.Errorf("failed to save marked up pdf inPath=%q err=%w", inPath, err)
+	// 	}
+	// }
+
+	// pageTexts := make([]string, len(pageColumnTexts))
+	// for i, columnTexts := range pageColumnTexts {
+	// 	if len(columnTexts) == 0 {
+	// 		continue
+	// 	}
+	// 	for j, text := range columnTexts {
+	// 		if len(text) == 0 {
+	// 			continue
+	// 		}
+	// 		text = fmt.Sprintf("\n -------------- "+
+	// 			"PAGE %d of %d Column %d of %d %s\n%s",
+	// 			pageNumbers[i], numPages, j+1, len(columnTexts), showBBox(pageColumns[i][j]), text)
+	// 		columnTexts[j] = text
+
+	// 	}
+	// 	text := strings.Join(columnTexts, "\n")
+	// 	text = fmt.Sprintf(" ============== PAGE %d of %d ==============\n%s",
+	// 		pageNumbers[i], numPages, text)
+	// 	pageTexts[i] = text
+	// }
 	docText := strings.Join(pageTexts, "\n")
 	if err := ioutil.WriteFile(outPath, []byte(docText), 0666); err != nil {
 		return fmt.Errorf("failed to write outPath=%q err=%w", outPath, err)
 	}
-	common.Log.Info("Extracted %q to %q. %d page texts", inPath, outPath, len(pageColumnTexts))
+	// common.Log.Info("Extracted %q to %q. %d page texts", inPath, outPath, len(pageColumnTexts))
 
 	return nil
+}
+
+func getPageText(inPath string, pdfReader *model.PdfReader, pageNum int) (string, error) {
+	page, err := pdfReader.GetPage(pageNum)
+	if err != nil {
+		return "", fmt.Errorf("GetPage failed. %q pageNum=%d err=%w", inPath, pageNum, err)
+	}
+
+	mbox, err := page.GetMediaBox()
+	if err != nil {
+		return "", fmt.Errorf("GetMediaBox failed. %q pageNum=%d err=%w", inPath, pageNum, err)
+	}
+	if page.Rotate != nil && *page.Rotate == 90 {
+		// TODO: This is a "hack" to change the perspective of the extractor to account for the rotation.
+		contents, err := page.GetContentStreams()
+		if err != nil {
+			return "", fmt.Errorf("GetContentStreams failed. %q pageNum=%d err=%w", inPath, pageNum, err)
+		}
+
+		cc := contentstream.NewContentCreator()
+		cc.Translate(mbox.Width()/2, mbox.Height()/2)
+		cc.RotateDeg(-90)
+		cc.Translate(-mbox.Width()/2, -mbox.Height()/2)
+		rotateOps := cc.Operations().String()
+		contents = append([]string{rotateOps}, contents...)
+
+		page.Duplicate()
+		if err = page.SetContentStreams(contents, core.NewRawEncoder()); err != nil {
+			return "", fmt.Errorf("SetContentStreams failed. %q pageNum=%d err=%w", inPath, pageNum, err)
+		}
+		page.Rotate = nil
+	}
+
+	ex, err := extractor.New(page)
+	if err != nil {
+		return "", fmt.Errorf("extractor.New failed. %q pageNum=%d err=%w", inPath, pageNum, err)
+	}
+	pageText, _, _, err := ex.ExtractPageText()
+	if err != nil {
+		return "", fmt.Errorf("ExtractPageText failed. %q pageNum=%d err=%w", inPath, pageNum, err)
+	}
+	return pageText.DumpText, nil
 }
 
 // getColumnsText reads the content streams of (1-offset) page `pageNum` of `pdfReader` and returns

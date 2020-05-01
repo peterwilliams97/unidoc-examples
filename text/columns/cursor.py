@@ -43,8 +43,12 @@ def scan(path):
 	return results
 
 
+R = 0.06
+def rnd(x):
+	return round(x / R) * R
+
 def makeKey(x, y):
-	return  '[%6.2f %6.2f]' % (x, y)
+	return  '[%6.2f %6.2f]' % (rnd(x), rnd(y))
 
 def asDict(results):
 	d = defaultdict(list)
