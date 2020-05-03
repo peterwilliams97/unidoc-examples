@@ -10,7 +10,7 @@ m = reGo.search(lineGo)
 assert m
 
 #  addWord ###1: TextOutputDev.cc:3080   21:`Current` base=213.85 x=53.98..82.19
-reCpp= re.compile(r'addWord ###1:\s+TextOutputDev.\cc:\d+\s+(\d+):\s*`(.+)`\s+base=(\S+)')
+reCpp= re.compile(r'addWord ###1:\s+TextOutputDev\.cc:\d+\s+(\d+):\s*`(.+)`\s+base=(\S+)')
 lineCpp = 'addWord ###1: TextOutputDev.cc:3080   21:`Current` base=213.85 x=53.98..82.19'
 m = reCpp.search(lineCpp)
 assert m
@@ -18,8 +18,9 @@ def scan(path, regex):
 	n = 0
 	nLines = 0
 	matches = []
-	with open(path, 'rt') as f:
+	with open(path, 'rt', errors='ignore') as f:
 		for line in f:
+			line = line[:-1]
 			nLines += 1
 			m = regex.search(line)
 			if not m:
@@ -29,7 +30,7 @@ def scan(path, regex):
 			text = m.group(2)
 			base = float(m.group(3))
 			# print('%d: %4d %4d' % (n, pool, start))
-			matches.append((nLines, idx,text,base, line[:-1]))
+			matches.append((nLines, idx,text,base, line))
 	return nLines, matches
 
 _, matches1 = scan(argv[1], reGo)
@@ -49,7 +50,7 @@ for i in range(n):
 	bad = i1 != i2 or t1 != t2 or b1 != b2
 	if bad:
 		badIds.append(i)
-	# (479 Mathematician; 696.84) 
+	# (479 Mathematician; 696.84)
 	# part1 = '(%3d %8s %5.2f)' % (i1, t1, b1)
 	# part2 = '(%3d %8s %5.2f)' % (i2, t2, b2)
 	part1 = '(%5.2f %s)' % (b1, t1)
@@ -70,32 +71,40 @@ print('-' * 80)
 print('%d bad of %d' % (len(badIds), n))
 print('%s %d matches' % (argv[1], len(matches1)))
 print('%s %d matches' % (argv[2], len(matches2)))
-print('bad=%d %s' % (len(badIds), badIds)) 
+print('bad=%d %s' % (len(badIds), badIds))
 
-pam1 = {v: k for k, v in map1.items()}
-pam2 = {v: k for k, v in map2.items()}
-print('-' * 80)
-edges = {}
-for i in badIds:
-	k1 = map1[i]
-	# k2 = map2[i]
-	j1 = pam2[k1]
-	v1 = map2[j1]
-	# v2 = pam1[k1]
-	# print(type(i), type(k1), type(j1), type(v1))
-	print('%20s %3d -> %3d' % (v1, i, j1))
-	edges[i] = j1
-	assert v1 == k1
+if False:
+	pam1 = {v: k for k, v in map1.items()}
+	pam2 = {v: k for k, v in map2.items()}
+	print('-' * 80)
+	edges = {}
+	for i in badIds:
+		k1 = map1[i]
+		# k2 = map2[i]
+		j1 = pam2[k1]
+		v1 = map2[j1]
+		# v2 = pam1[k1]
+		# print(type(i), type(k1), type(j1), type(v1))
+		print('%20s %3d -> %3d' % (v1, i, j1))
+		edges[i] = j1
+		assert v1 == k1
 
-cycles = []
-print('-' * 80)
+	cycles = []
+	print('-' * 80)
+	for i in badIds:
+		j = i
+		cycle = [j]
+		while True:
+			j = edges[j]
+			if j == i:
+				break
+			cycle.append(j)
+		cycles.append(cycle)
+		print('%20s %3d -> %s' % ( map1[i], i, cycle))
+
+
+print('&' * 80)
 for i in badIds:
-	j = i
-	cycle = [j]
-	while True:
-		j = edges[j]
-		if j == i:
-			break
-		cycle.append(j)
-	cycles.append(cycle)
-	print('%20s %3d -> %s' % ( map1[i], i, cycle))
+	n1, i1, t1, b1, l1 = matches1[i]
+	n2, i2, t2, b2, l2 = matches2[i]
+	print('%3d:\n\t>>%s<<\n\t>>%s<<' % (i, l1, l2))

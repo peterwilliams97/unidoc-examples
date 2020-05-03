@@ -9,7 +9,7 @@ def scan(path):
 	n = 0
 	nLines = 0
 	matches = []
-	with open(path, 'rt') as f:
+	with open(path, 'rt', errors='ignore') as f:
 		for line in f:
 			nLines += 1
 			m = regex.search(line)

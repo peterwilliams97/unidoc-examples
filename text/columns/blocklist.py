@@ -15,8 +15,8 @@ assert reBlock.search(lineBlock)
 # line 0: base=120.24 {42.52 422.51 670.63 694.63} fontSize=24.00 "How people decide what they want to"
 # base=18.14 {531.47 566.93 758.55 767.55} fontSize=9.00 "PIONEER"
 # line 0: serial=0 base=18.14 {531.47 566.93 758.55 767.55} fontSize=9.00 "PIONEER" col=
-reLine = re.compile(r'line\s+(\d+)\s*:\s*serial=\d+\s+base=(\S+)\s*\{\s*(\S+)\s+(\S+)\s+(\S+)\s*(\S+)\s*\}\s*fontSize=(\S+)\s*"(.*)"')
-lineLine = 'line 0: serial=0 base=18.14 {531.47 566.93 758.55 767.55} fontSize=9.00 "PIONEER" col'
+reLine = re.compile(r'line\s+(\d+)\s*:\s*serial=\d+\s+base=(\S+)\s*\{\s*(\S+)\s+(\S+)\s+(\S+)\s*(\S+)\s*\}\s*fontsize=(\S+)\s*"(.*)"')
+lineLine = 'line 0: serial=0 base=18.14 {531.47 566.93 758.55 767.55} fontsize=9.00 "PIONEER" col'
 assert reLine.search(lineLine)
 
 def parseBlock(i, line):
@@ -86,7 +86,7 @@ def scan(path, wantedTitle):
 				lines = []
 				# print('nLines=%d' % nLines)
 			elif state == 2:
-				idx, base, llx, urx, lly, ury, fontsize, text = parseLine(i, line) 
+				idx, base, llx, urx, lly, ury, fontsize, text = parseLine(i, line)
 				lines.append((idx, base, llx, urx, lly, ury, fontsize, text, line))
 				assert idx < nLines
 				if len(lines) == nLines:
@@ -96,11 +96,11 @@ def scan(path, wantedTitle):
 						break
 					else:
 						state = 1
-				
+
 			# if state != 0:
-			# 	print('state=%d->%d: %s' % (oldState, state, line))	
+			# 	print('state=%d->%d: %s' % (oldState, state, line))
 			# 	oldState = state
-			
+
 	assert nBlocks == len(blocks)
 	return title, titleLine, blocks
 
@@ -139,24 +139,24 @@ for i in range(n):
 	# idx, llx, urx, lly, ury, base, text, line
 	# blk1=[0, 0, 54.0, 91.85, 697.92, 755.88, 1, 'block 0: rot=0 {54.00 91.85 697.92 755.88} col=0 nCols=0 lines=1']
 	# blk2=[0, 0, 54.0, 91.85, 36.0, 114.95, 1, 'block 0: rot=0 {54.00 91.85 36.00 114.95} col=0 nCols=1 lines=1']
-	idx1, rot1, llx1, urx1, lly1, ury1, nLines1, line1 = blk1 
+	idx1, rot1, llx1, urx1, lly1, ury1, nLines1, line1 = blk1
 	idx2, rot2, llx2, urx2, lly2, ury2, nLines2, line2 = blk2
 	msg = '\n\t%s \n- >>%s<<\n\t%s \n- >>%s<<' % (blk1, line1, blk2, line2)
 	assert idx1 == idx2, msg
 	assert llx1 == llx2, msg
 	assert urx1 == urx2, msg
 	assert nLines1 == nLines2, msg
-	
+
 	assert len(lines1) == len(lines2)
 	m = len(lines1)
 
 	print('block %2d: %d entries -----------' % (i, m))
-	
+
 	for j in range(m):
 		# print('blk1=%d %s' % (len(blk1[j]), blk1[j]))
 		# idx, llx, urx, lly, ury, base, text, line
-		idx1, base1, llx1, urx1, lly1, ury1, fontsize1, text1, line1 = lines1[j] 
-		idx2, base2, llx2, urx2, lly2, ury2, fontsize2, text2, line2 = lines2[j] 
+		idx1, base1, llx1, urx1, lly1, ury1, fontsize1, text1, line1 = lines1[j]
+		idx2, base2, llx2, urx2, lly2, ury2, fontsize2, text2, line2 = lines2[j]
 		msg = 'j=%d\n\tlines1=%s\n\tlines2=%s' % (j, lines1[j], lines2[j])
 		# print('line %2d: %s' % (j, msg))
 		assert equal(llx1, llx2), msg

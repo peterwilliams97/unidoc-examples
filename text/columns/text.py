@@ -10,9 +10,9 @@ assert reText.search(lineText)
 def scan(path):
 	nLines = 0
 	matches = []
-	with open(path, 'rt') as f:
+	with open(path, 'rt', errors='ignore') as f:
 		for line in f:
-			line = line[:-1] 
+			line = line[:-1]
 			nLines += 1
 			m = reText.search(line)
 			if not m:
@@ -54,7 +54,7 @@ print('-' * 80)
 print('%d bad of %d' % (len(badIds), n))
 print('%s %d matches' % (argv[1], len(matches1)))
 print('%s %d matches' % (argv[2], len(matches2)))
-print('bad=%d %s' % (len(badIds), badIds)) 
+print('bad=%d %s' % (len(badIds), badIds))
 
 for i in badIds:
 	marker = '******' if i in caseBadIds else ''

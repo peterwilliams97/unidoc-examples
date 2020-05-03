@@ -1,4 +1,4 @@
-blocks are build from pools
+blocks are builr from pools
 flows are built from blocks
 frags are parts of lines?
 
@@ -13,6 +13,12 @@ TextPage::addChar shows word splitting
 
 TODO
 ====
+addChar -> addMark
+b1.pdf para order
+
+
+---
+
 
 pioneer.pdf       Heading order
 king.pdf          Heading order  Mary-Clair King '67

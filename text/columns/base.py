@@ -13,7 +13,7 @@ def scan(path):
 	n = 0
 	nLines = 0
 	matches = []
-	with open(path, 'rt') as f:
+	with open(path, 'rt', errors='ignore') as f:
 		for line in f:
 			nLines += 1
 			m = regex.search(line)
@@ -39,7 +39,7 @@ for i in range(n):
 	n2, i2, a2, c2, l2 = matches2[i]
 	bad = i1 != i2 or a1 != a2 or c1 !=c2
 	marker = '******' if bad else ''
-	print('%3d: (%6.2f %6.2f %3d)  (%6.2f %6.2f %3d) %s' % (i, 
+	print('%3d: (%6.2f %6.2f %3d)  (%6.2f %6.2f %3d) %s' % (i,
 	     i1, a1, c1, i2, a2, c2, marker))
 	if bad:
 		print('%6d: %s' % (n1, l1))

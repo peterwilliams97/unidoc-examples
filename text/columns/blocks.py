@@ -25,7 +25,7 @@ def scanBlocks(path):
 	lines = []
 	header = None
 	state = 0
-	with open(path, 'rt') as f:
+	with open(path, 'rt', errors='ignore') as f:
 		for line in f:
 			line = line[:-1]
 			if not line:
@@ -37,15 +37,15 @@ def scanBlocks(path):
 					header = m.group(1)
 					lines = []
 			elif state == 2:
-				if txtBlk2 in line or reBlk0.search(line): 
+				if txtBlk2 in line or reBlk0.search(line):
 					state = 0
 					assert lines
 					blocks.append((header,lines))
 				else:
 					lines.append(line)
 			# if state != 0:
-			# 	print('state=%d: %s' % (state, line[:-1]))	
-			
+			# 	print('state=%d: %s' % (state, line[:-1]))
+
 	return blocks
 
 
@@ -87,7 +87,7 @@ def scan(path):
 	# print('scan: blocks=%d' % len(blocks))
 	return [(header, lines, parseBlockLines(lines)) for header, lines in blocks]
 
-	
+
 blocks1 = scan(argv[1])
 blocks2 = scan(argv[2])
 print('%s %d blocks' % (argv[1], len(blocks1)))
@@ -132,12 +132,12 @@ for i in range(n):
 	assert llx1 == llx2, msg
 	assert urx1 == urx2, msg
 	assert nLines1 == nLines2, msg
-	
+
 	for j in range(m):
 		# print('blk1=%d %s' % (len(blk1[j]), blk1[j]))
-		llx1, urx1, lly1, ury1, base1, text1, line1 = blk1[j] 
-		llx2, urx2, lly2, ury2, base2, text2, line2 = blk2[j] 
-		msg = 'j=%d\n\tblk1=%s\n\tblk2=%s\nlines1=\n%s\nlines2=\n%s' % (j, 
+		llx1, urx1, lly1, ury1, base1, text1, line1 = blk1[j]
+		llx2, urx2, lly2, ury2, base2, text2, line2 = blk2[j]
+		msg = 'j=%d\n\tblk1=%s\n\tblk2=%s\nlines1=\n%s\nlines2=\n%s' % (j,
 				blk1[j], blk2[j], showLines(header1, lines1), showLines(header2,lines2))
 		# print('line %2d: %s' % (j, msg))
 		assert equal(llx1, llx2), msg

@@ -1,6 +1,10 @@
 import re
 from sys import argv
 
+# print('>>%s<<' % "")
+# print('ord=%d' % ord(""))
+# assert False
+
 # text.go: 1325 *@* %s *#* *
 # !!1 rot = 0 - --------------
 # !!2 baseIdx = 7 n = 2 - --------------
@@ -13,7 +17,7 @@ from sys import argv
 reHeader = re.compile(r'\*@\*\s+(.*?)\s+\*#\*')
 reRot = re.compile(r'!!1 rot\s*=\s*(\d)\s*--------------')
 reBase = re.compile(r'!!2 baseIdx\s*=\s*(\d+)\s+n\s*=(\d+)\s*--------------')
-reWord = re.compile(r'word\s+(\d+)\s*:\s*base=(\S+)\s*\{\s*(\S+)\s+(\S+)\s+(\S+)\s*(\S+)\s*\}\s*fontsize=(\S+)\s*"(.*)"')
+reWord = re.compile(r'word\s+(\d+)\s*:\s*serial\s*=\s*\d+\s+base=\s*(\S+)\s*\{\s*(\S+)\s+(\S+)\s+(\S+)\s*(\S+)\s*\}\s*fontsize\s*=\s*(\S+)\s*"(.*)"')
 
 lineHeader = 'text.go:1325 *@* initial words *#*'
 assert reHeader.search(lineHeader)
@@ -21,7 +25,7 @@ lineRot = '!!1 rot=0 ---------------'
 assert reRot.search(lineRot)
 lineBase = '!!2 baseIdx=7 n=2 ---------------'
 assert reBase.search(lineBase)
-lineWord = '"     word   0: base=110.62 {42.52 136.70 731.27 784.27} fontsize=53.00 "Print"'
+lineWord = 'word   0: serial=0 base=99.96 {143.54 177.69 741.93 756.27} fontsize=14.35 "High"'
 assert reWord.search(lineWord)
 
 
@@ -112,7 +116,10 @@ TOL = 0.1
 def equal(x1, x2):
 	return abs(x1 - x2) < TOL
 
-exclusions = ['\x13','\x19']
+
+exclusions = ['\x13', '\x19', 'résumé', '’'
+# '“young', 'smarter”'
+]
 
 
 def exclude(text):
@@ -120,6 +127,24 @@ def exclude(text):
 		if e in text:
 			return True
 	return False
+
+def isJunk(c):
+	return c in '“”' or ord(c) < 0x20 or c.isspace() or ord(c) == 0x200b
+
+def clean(text):
+	while text and isJunk(text[0]):
+		text = text[1:]
+	while text and isJunk(text[-1]):
+		text = text[:-1]
+	return text
+
+def show(text):
+	return '>%s< %s %s' % (text, ['(%s)' % c for c in text], [ord(c) for c in text])
+
+
+TOL = 0.01
+def equal(x1, x2):
+	return abs(x1 - x2) < TOL
 
 def compareInstance(instance1, instance2):
 	i1, h1, rots1 = instance1
@@ -136,10 +161,16 @@ def compareInstance(instance1, instance2):
 	for i in range(n):
 		baseIdx1, words1 = bases1[i]
 		baseIdx2, words2 = bases2[i]
+		sentence1 = ''.join(w[7] for w in words1)
+		sentence2 = ''.join(w[7] for w in words2)
 		print('  bases %2d: baseIdx=%d words=%d | baseIdx=%d words=%d' % (
 			i, baseIdx1, len(words1), baseIdx2, len(words2)))
 		assert baseIdx1 == baseIdx2
-		assert len(words1) == len(words2)
+		assert len(words1) == len(words2) or clean(sentence1) == clean(sentence2), '\n\t%s\n\t%s' % (
+			show(clean(sentence1)), show(clean(sentence2)))
+
+		if len(words1) != len(words2):
+			continue
 
 		m = len(words1)
 		for j in range(m):
@@ -151,13 +182,15 @@ def compareInstance(instance1, instance2):
 			assert base1 == base2, msg
 			assert llx1 == llx2, msg
 			assert urx1 == urx2, msg
-			assert fontsize1 == fontsize2, msg
+			assert fontsize1 == fontsize2, '%d %d\n%s' % (fontsize1, fontsize2, msg)
 			# assert text1 not in exclusions, text1
 			# assert text2 not in exclusions, text2
+			text2 = text2.replace('\x19', '’')
 			if exclude(text1) or exclude(text2):
 				print(msg)
 			if exclude(text1) == exclude(text2):
-				assert text1 == text2, msg
+				assert clean(text1) == clean(text2), '\n\t%s\n\t%s\n%s' % (
+					show(clean(text1)), show(clean(text2)), msg)
 		# if baseIdx1 == 69:
 		# 	print(msg)
 		# 	break
