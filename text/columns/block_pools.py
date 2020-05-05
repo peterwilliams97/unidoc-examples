@@ -19,8 +19,7 @@ lineBlk0 = 'TextOutputDev.cc:1896 textBlock: lines built blk=1------------------
 assert reBlk0.search(lineBlk0)
 
 # block 0: rot=0 {143.54 468.45 741.93 756.27} col=0 nCols=0 lines=0 pools=1 minBaseIdx=24 maxBaseIdx=24
-reBlock = re.compile(
-	r'block\s+(\d+):+\s+rot=(\d+)\s+\{\s*(\S+)\s+(\S+)\s+(\S+)\s*(\S+)\s*\}.*lines=(-?\d+)\s+pools=(-?\d+)')
+reBlock = re.compile(r'block\s+(\d+):+\s+rot=(\d+)\s+\{\s*(\S+)\s+(\S+)\s+(\S+)\s*(\S+)\s*\}.*lines=(-?\d+)\s+pools=(-?\d+)')
 lineBlock = 'block 0: rot=0 {143.54 468.45 741.93 756.27} col=0 nCols=0 lines=0 pools=1 minBaseIdx=- maxBaseIdx=24'
 assert reBlock.search(lineBlock)
 
@@ -28,6 +27,10 @@ assert reBlock.search(lineBlock)
 rePool = re.compile(r'pool\s+(\d+)\s*:\s*baseIdx=(-?\d+)\s+len=(\d+)')
 linePool = 'pool 0: baseIdx=24 len=5'
 assert rePool.search(linePool)
+
+reLine = re.compile(r'line\s+(\d+)\s*:\s*serial\s*=\s*\d+\s*base=\s*(\S+)\s*\{\s*(\S+)\s+(\S+)\s+(\S+)\s*(\S+)\s*\}\s*fontsize=(\S+)\s*"(.*)"')
+lineLine = 'line 0: serial=0 base=99.96 {143.54 468.45 741.93 756.27} fontsize=14.35 "High Performance Document Layout Analysis" col = 0 []'
+assert reLine.search(lineLine)
 
 # word 0: serial=0 base=99.96 {143.54 177.69 741.93 756.27} fontsize=14.35 "High"
 reWord = re.compile(r'word\s+(\d+)\s*:\s*serial\s*=\s*\d+\s+base=\s*(\S+)\s*\{\s*(\S+)\s+(\S+)\s+(\S+)\s*(\S+)\s*\}\s*fontsize\s*=\s*(\S+)\s*"(.*)"')
@@ -60,11 +63,11 @@ def parsePool(i, line):
 def parseLine(i, line):
 	m = reLine.search(line)
 	assert m, '%d: >>>%s<<<' % (i, line)
-	llx = float(m.group(1))
-	urx = float(m.group(2))
-	lly = float(m.group(3))
-	ury = float(m.group(4))
-	base = float(m.group(5))
+	base = float(m.group(1))
+	llx = float(m.group(2))
+	urx = float(m.group(3))
+	lly = float(m.group(4))
+	ury = float(m.group(5))
 	text = m.group(6)
 	return llx, urx, lly, ury, base, text, line
 
@@ -87,6 +90,7 @@ def parseWord(i, line):
 	return idx, base, llx, urx, lly, ury, fontsize, text
 
 def scan(path):
+	print('scan: %s -----------------' % path)
 	n = 0
 	blocks = []
 	pools = []
@@ -97,7 +101,12 @@ def scan(path):
 	state = 0
 	oldState = 0
 	with open(path, 'rt', errors='ignore') as f:
-		for i, line in enumerate(f):
+		for i1, line in enumerate(f):
+			i = i1 + 1
+			line = line[:-1].strip()
+			if not line:
+				continue
+
 			if state == 3 and len(words) == nWords:
 				pools.append((pool, words))
 				state = 2
@@ -109,13 +118,6 @@ def scan(path):
 				pools = []
 				nPools = 0
 
-			# if state != 0 and (txtBlk2 in line or reBlk0.search(line)):
-			# 	state = 0
-
-			line = line[:-1]
-			line = line.strip()
-			if not line:
-				continue
 			if state == 0:
 				m = reBlk0.search(line)
 				if m:
@@ -150,7 +152,7 @@ def showLines(header, lines):
 	line0 = '%d lines ' % len(lines)
 	line0 += 'x' * (80 - len(line0))
 	line1 = '+' * 80
-	lines = [header, line0] + lines + [line1]
+	lines = [header, line0] + [str(l) for l in lines] + [line1]
 	return '\n'.join(lines)
 
 
@@ -184,7 +186,9 @@ for i in range(n):
 	header2, blk2, pools2 = blocks2[i]
 	assert header1 == header2, (header1, header2)
 	msg =  'i=%d "%s" blk1=%d blk2=%d\npools1=\n%s\npools2=\n%s' % (
-		i, header1, len(pools1), len(pools2), showPools(header1, pools1), showPools(header2, pools2))
+		i, header1, len(pools1), len(pools2),
+		showPools(header1, pools1),
+		showPools(header2, pools2))
 
 	print('block %2d ----------- "%s"\n\t%s\n\t%s' % (i, header1, list(blk1), list(blk2)))
 	# print('blk1=%d %s' % (len(blk1), list(blk1)))
@@ -213,9 +217,5 @@ for i in range(n):
 		assert line1 == line2, msg
 		assert nWords1 == len(words1)
 		assert nWords2 == len(words2)
-		# assert equal(urx1, urx2), msg
-		# # assert lly1 == lly2, msg
-		# # assert ury1 == ury2, msg
-		# assert equal(base1, base2), msg
-		# assert text1 == text2, msg
+
 print('/' * 80)

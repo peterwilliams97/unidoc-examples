@@ -3,7 +3,6 @@ from sys import argv
 
 # showBlockList: sorted : 21
 reBlkList = re.compile(r'showBlockList:\s*(.*?)\s*:\s+(\d+)\s*$')
-
 lineBlkList = 'showBlockList: unsorted : 21'
 assert reBlkList.search(lineBlkList)
 
@@ -49,7 +48,6 @@ def parseLine(i, line):
 		raise
 	return idx, base, llx, urx, lly, ury, fontsize, text
 
-
 def scan(path, wantedTitle):
 	print("scan: %s ----------------" % path)
 	n = 0
@@ -62,7 +60,7 @@ def scan(path, wantedTitle):
 	nBlocks = 0
 	with open(path, 'rt', errors='ignore') as f:
 		for i, line in enumerate(f):
-			line = line[:-1]
+			line = line[:-1].strip()
 			if not line:
 				continue
 			if state == 0:
@@ -72,6 +70,7 @@ def scan(path, wantedTitle):
 					title = m.group(1)
 					print('title="%s" %s' % (title, path))
 					if wantedTitle and title != wantedTitle:
+						assert False
 						continue
 					nBlocks = int(m.group(2))
 					blocks = []
@@ -104,19 +103,6 @@ def scan(path, wantedTitle):
 	assert nBlocks == len(blocks)
 	return title, titleLine, blocks
 
-
-wantedTitle = None
-if len(argv) > 3:
-	wantedTitle = argv[3]
-title1, titleLine1, blocks1 = scan(argv[1], wantedTitle)
-title2, titleLine2, blocks2 = scan(argv[2], wantedTitle)
-print('%s %d blocks "%s"' % (argv[1], len(blocks1), title1))
-print('%s %d blocks "%s"' % (argv[2], len(blocks2), title1))
-msg = "\n\t >>%s<<\n\t >>%s<<" % (titleLine1, titleLine2)
-assert title1 == title2, msg
-# assert len(blocks1) == len(blocks2), msg
-
-
 def showLines(header, lines):
 	line0 = '%d lines ' % len(lines)
 	line0 += 'x' * (80 - len(line0))
@@ -124,11 +110,21 @@ def showLines(header, lines):
 	lines = [header, line0] + lines + [line1]
 	return '\n'.join(lines)
 
-
 TOL = 0.1
 def equal(x1, x2):
 	return abs(x1 - x2) < TOL
 
+wantedTitle = None
+if len(argv) > 3:
+	wantedTitle = argv[3]
+	print('wantedTitle="%s"' % wantedTitle)
+title1, titleLine1, blocks1 = scan(argv[1], wantedTitle)
+title2, titleLine2, blocks2 = scan(argv[2], wantedTitle)
+print('%s %d blocks "%s"' % (argv[1], len(blocks1), title1))
+print('%s %d blocks "%s"' % (argv[2], len(blocks2), title1))
+msg = "\n\t >>%s<<\n\t >>%s<<" % (titleLine1, titleLine2)
+assert title1 == title2, msg
+# assert len(blocks1) == len(blocks2), msg
 n = min(len(blocks1), len(blocks2))
 
 for i in range(n):
