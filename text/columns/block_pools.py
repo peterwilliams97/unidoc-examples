@@ -201,9 +201,6 @@ for i in range(n):
 	assert nPools1 == len(pools1), msg
 	assert nPools2 == len(pools2), msg
 
-
-
-
 	for j in range(m):
 		# print('blk1=%d %s' % (len(blk1[j]), blk1[j]))
 		(idx1, baseIdx1, nWords1, line1), words1 = pools1[j]
