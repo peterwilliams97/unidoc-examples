@@ -59,7 +59,8 @@ def scan(path, wantedTitle):
 	blockN = 0
 	nBlocks = 0
 	with open(path, 'rt', errors='ignore') as f:
-		for i, line in enumerate(f):
+		for i1, line in enumerate(f):
+			i = i1 + 1
 			line = line[:-1].strip()
 			if not line:
 				continue
@@ -125,6 +126,7 @@ print('%s %d blocks "%s"' % (argv[2], len(blocks2), title1))
 msg = "\n\t >>%s<<\n\t >>%s<<" % (titleLine1, titleLine2)
 assert title1 == title2, msg
 # assert len(blocks1) == len(blocks2), msg
+
 n = min(len(blocks1), len(blocks2))
 
 for i in range(n):
@@ -153,7 +155,9 @@ for i in range(n):
 		# idx, llx, urx, lly, ury, base, text, line
 		idx1, base1, llx1, urx1, lly1, ury1, fontsize1, text1, line1 = lines1[j]
 		idx2, base2, llx2, urx2, lly2, ury2, fontsize2, text2, line2 = lines2[j]
-		msg = 'j=%d\n\tlines1=%s\n\tlines2=%s' % (j, lines1[j], lines2[j])
+		msg = 'j=%d\n\tlines1=%s\n\t>>%s<<\tlines2=%s\n\t>>%s<<' % (j,
+			lines1[j][:-1], lines1[j][-1],
+			lines2[j][:-1], lines2[j][-1])
 		# print('line %2d: %s' % (j, msg))
 		assert equal(llx1, llx2), msg
 		assert equal(urx1, urx2), msg
