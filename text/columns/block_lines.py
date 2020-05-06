@@ -1,6 +1,16 @@
 import re
 from sys import argv
 
+# [INFO]  text_block.go:276 textBlock: before discardDuplicatedText blk=0--------------------------
+#  block 0: rot=0 {143.54 468.45 741.93 756.27} col=0 nCols=0 lines=0 pools=1 minBaseIdx=24 maxBaseIdx=24
+#  pool 0: baseIdx=24 len=5
+#   word 0: serial=0 base=99.96 {143.54 177.69 741.93 756.27} fontsize=14.35 "High"
+#   word 1: serial=0 base=99.96 {183.07 271.98 741.93 756.27} fontsize=14.35 "Performance"
+#   word 2: serial=0 base=99.96 {277.36 350.01 741.93 756.27} fontsize=14.35 "Document"
+#   word 3: serial=0 base=99.96 {355.38 403.87 741.93 756.27} fontsize=14.35 "Layout"
+#   word 4: serial=0 base=99.96 {409.23 468.45 741.93 756.27} fontsize=14.35 "Analysis"
+# [INFO]  text_block.go:278 ----------xxxx------------
+
 # textBlock: lines built blk=3--------------------------
 reBlk0 = re.compile(r'textBlock:\s+(.*)\s+blk=(\d+)')
 txtBlk2 = '----------xxxx------------'
@@ -8,18 +18,14 @@ txtBlk2 = '----------xxxx------------'
 lineBlk0 = 'TextOutputDev.cc:1896 textBlock: lines built blk=1--------------------------'
 assert reBlk0.search(lineBlk0)
 
-# block 0: rot=0 {143.54 468.45 741.93 756.27} col=0 nCols=0 lines=0 pools=1 minBaseIdx=24 maxBaseIdx=24
 reBlock = re.compile(r'block\s+(\d+):+\s+rot=(\d+)\s+\{\s*(\S+)\s+(\S+)\s+(\S+)\s*(\S+)\s*\}.*lines=(-?\d+)\s+pools=(-?\d+)')
 lineBlock = 'block 0: rot=0 {143.54 468.45 741.93 756.27} col=0 nCols=0 lines=0 pools=1 minBaseIdx=- maxBaseIdx=24'
 assert reBlock.search(lineBlock)
 
-#  pool 0: baseIdx=24 len = 5
 rePool = re.compile(r'pool\s+(\d+)\s*:\s*baseIdx=(-?\d+)\s+len=(\d+)')
 linePool = 'pool 0: baseIdx=24 len=5'
 assert rePool.search(linePool)
 
-# line 0: serial = 0 base = 99.96 {143.54 468.45 741.93 756.27} fontsize = 14.35 "High Performance Document Layout Analysis" col = 0 []
-# line 0: base=120.24 {42.52 422.51 670.63 694.63} fontSize=24.00 "How people decide what they want to"
 reLine = re.compile(r'line\s+(\d+)\s*:\s*serial\s*=\s*\d+\s*base=\s*(\S+)\s*\{\s*(\S+)\s+(\S+)\s+(\S+)\s*(\S+)\s*\}\s*fontsize=(\S+)\s*"(.*)"')
 lineLine = 'line 0: serial=0 base=99.96 {143.54 468.45 741.93 756.27} fontsize=14.35 "High Performance Document Layout Analysis" col = 0 []'
 assert reLine.search(lineLine)
@@ -60,8 +66,9 @@ def parseLine(i, line):
 	urx = float(m.group(3))
 	lly = float(m.group(4))
 	ury = float(m.group(5))
-	text = m.group(6)
-	return llx, urx, lly, ury, base, text, line
+	fontsize = float(m.group(6))
+	text = m.group(7)
+	return base, llx, urx, lly, ury, fontsize, text, line
 
 def parseWord(i, line):
 	'word   0: serial=0 base=99.96 {143.54 177.69 741.93 756.27} fontsize=14.35 "High"'
@@ -127,26 +134,25 @@ def scan(path):
 
 	return blocks
 
-
 def showLines(header, lines):
 	line0 = '%d lines ' % len(lines)
 	line0 += 'x' * (80 - len(line0))
 	line1 = '+' * 80
-	lines = [header, line0] + [str(l) for l in lines] + [line1]
+	lines = [header, line0] + ['>>%s<<' % ln[-1] for ln in lines] + [line1]
 	return '\n'.join(lines)
-
 
 def showPools(header, pools):
 	line0 = '%d pools ' % len(pools)
 	line0 += 'x' * (80 - len(line0))
 	line1 = '+' * 80
-	lines = [header, line0, line1]
+	# (idx1, baseIdx1, nWords1, line1), words1
+	lines = [header, line0] + ['>>%s<<' % l[0][3] for l in pools] + [line1]
+	# lines = [header, line0, line1]
 	return '\n'.join(lines)
 
 TOL = 0.1
 def equal(x1, x2):
 	return abs(x1 - x2) < TOL
-
 
 blocks1 = scan(argv[1])
 blocks2 = scan(argv[2])
@@ -181,19 +187,19 @@ for i in range(n):
 	assert llx1 == llx2, msg
 	assert urx1 == urx2, msg
 	assert nLines1 == nLines2, msg
-	assert nPools1 == nPools2, msg
 	assert nLines1 == len(lines1), msg
 	assert nLines2 == len(lines2), msg
 
 	for j in range(m):
 		# print('blk1=%d %s' % (len(blk1[j]), blk1[j]))
-		base1, lx1, urx1, lly1, ury1, text1, line1 = lines1[j]
-		base2, lx2, urx2, lly2, ury2, text2, line2 = lines2[j]
+		base1, lx1, urx1, lly1, ury1, fontsize1, text1, line1 = lines1[j]
+		base2, lx2, urx2, lly2, ury2, fontsize2, text2, line2 = lines2[j]
 		msg = 'j=%d\n\tblk1=%s\n\tblk2=%s' % (j, lines1[j], lines2[j])
 
 		assert base1 == base2, msg
 		assert llx1 == llx2, msg
 		assert urx1 == urx2, msg
+		assert fontsize1 == fontsize1, msg
 		assert text1 == text2, msg
 
 print('/' * 80)

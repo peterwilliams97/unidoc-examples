@@ -18,12 +18,10 @@ txtBlk2 = '----------xxxx------------'
 lineBlk0 = 'TextOutputDev.cc:1896 textBlock: lines built blk=1--------------------------'
 assert reBlk0.search(lineBlk0)
 
-# block 0: rot=0 {143.54 468.45 741.93 756.27} col=0 nCols=0 lines=0 pools=1 minBaseIdx=24 maxBaseIdx=24
 reBlock = re.compile(r'block\s+(\d+):+\s+rot=(\d+)\s+\{\s*(\S+)\s+(\S+)\s+(\S+)\s*(\S+)\s*\}.*lines=(-?\d+)\s+pools=(-?\d+)')
 lineBlock = 'block 0: rot=0 {143.54 468.45 741.93 756.27} col=0 nCols=0 lines=0 pools=1 minBaseIdx=- maxBaseIdx=24'
 assert reBlock.search(lineBlock)
 
-#  pool 0: baseIdx=24 len = 5
 rePool = re.compile(r'pool\s+(\d+)\s*:\s*baseIdx=(-?\d+)\s+len=(\d+)')
 linePool = 'pool 0: baseIdx=24 len=5'
 assert rePool.search(linePool)
@@ -68,8 +66,9 @@ def parseLine(i, line):
 	urx = float(m.group(3))
 	lly = float(m.group(4))
 	ury = float(m.group(5))
-	text = m.group(6)
-	return llx, urx, lly, ury, base, text, line
+	fontsize = float(m.group(6))
+	text = m.group(7)
+	return base, llx, urx, lly, ury, fontsize, text, line
 
 def parseWord(i, line):
 	'word   0: serial=0 base=99.96 {143.54 177.69 741.93 756.27} fontsize=14.35 "High"'
@@ -124,7 +123,7 @@ def scan(path):
 					header = m.group(1)
 					state = 1
 			elif state == 1:
-				block = parseBlock(i, line)
+				block = list(parseBlock(i, line)) + [line]
 				state = 2
 				nPools = block[7]
 				pools = []
@@ -152,7 +151,7 @@ def showLines(header, lines):
 	line0 = '%d lines ' % len(lines)
 	line0 += 'x' * (80 - len(line0))
 	line1 = '+' * 80
-	lines = [header, line0] + [str(l) for l in lines] + [line1]
+	lines = [header, line0] + ['>>%s<<' % ln[-1] for ln in lines] + [line1]
 	return '\n'.join(lines)
 
 
@@ -160,7 +159,9 @@ def showPools(header, pools):
 	line0 = '%d pools ' % len(pools)
 	line0 += 'x' * (80 - len(line0))
 	line1 = '+' * 80
-	lines = [header, line0, line1]
+	# (idx1, baseIdx1, nWords1, line1), words1
+	lines = [header, line0] + ['>>%s<<' % l[0][3] for l in pools] + [line1]
+	# lines = [header, line0, line1]
 	return '\n'.join(lines)
 
 TOL = 0.1
@@ -195,12 +196,15 @@ for i in range(n):
 	assert len(pools1) == len(pools2), msg
 	m = len(pools1)
 
-	idx1, rot1, llx1, urx1, lly1, ury1, nLines1, nPools1 = blk1
-	idx2, rot2, llx2, urx2, lly2, ury2, nLines2, nPools2 = blk2
+	idx1, rot1, llx1, urx1, lly1, ury1, nLines1, nPools1, line1 = blk1
+	idx2, rot2, llx2, urx2, lly2, ury2, nLines2, nPools2, line2 = blk2
+	msg = 'i=%d "%s" blk1=%d blk2=%d\nblk1=%s\n>>%s<<\nblk2=%s\n>>%s<<' % (
+		i, header1, len(pools1), len(pools2),
+		blk1[:-1], blk1[-1],
+		blk2[:-1], blk2[-1])
 	assert idx1 == idx2, msg
 	assert llx1 == llx2, msg
 	assert urx1 == urx2, msg
-	assert nLines1 == nLines2, msg
 	assert nPools1 == nPools2, msg
 	assert nPools1 == len(pools1), msg
 	assert nPools2 == len(pools2), msg
