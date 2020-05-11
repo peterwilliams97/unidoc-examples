@@ -19,8 +19,20 @@ lineBlk0 = 'TextOutputDev.cc:1896 textBlock: lines built blk=1------------------
 assert reBlk0.search(lineBlk0)
 
 reBlock = re.compile(r'block\s+(\d+):+\s+rot=(\d+)\s+\{\s*(\S+)\s+(\S+)\s+(\S+)\s*(\S+)\s*\}.*lines=(-?\d+)\s+pools=(-?\d+)')
-lineBlock = 'block 0: rot=0 {143.54 468.45 741.93 756.27} col=0 nCols=0 lines=0 pools=1 minBaseIdx=- maxBaseIdx=24'
+lineBlock = 'block 0: rot=0 {143.54 468.45 741.93 756.27} col=0 nCols=0 lines=7 pools=13 minBaseIdx=- maxBaseIdx=24'
 assert reBlock.search(lineBlock)
+m = reBlock.search(lineBlock)
+nLines = int(m.group(7))
+nPools = int(m.group(8))
+assert nLines == 7
+assert nPools == 13
+lineBlock = 'block 0: rot=0 {375.68 417.32 270.00 290.00} col=0 nCols=0 lines=0 pools=1'
+m = reBlock.search(lineBlock)
+nLines = int(m.group(7))
+nPools = int(m.group(8))
+assert nLines == 0
+assert nPools == 1
+
 
 rePool = re.compile(r'pool\s+(\d+)\s*:\s*baseIdx=(-?\d+)\s+len=(\d+)')
 linePool = 'pool 0: baseIdx=24 len=5'
@@ -47,7 +59,7 @@ def parseBlock(i, line):
 	# base = float(m.group(7))
 	nLines = int(m.group(7))
 	nPools = int(m.group(8))
-	return idx, rot, llx, urx, lly, ury, nLines, nPools
+	return i, idx, rot, llx, urx, lly, ury, nLines, nPools
 
 def parsePool(i, line):
 	m = rePool.search(line)
@@ -56,7 +68,7 @@ def parsePool(i, line):
 	baseIdx = int(m.group(2))
 	nWords = float(m.group(3))
 	assert nWords > 0, (i, line)
-	return idx, baseIdx, nWords, line
+	return i, idx, baseIdx, nWords, line
 
 def parseLine(i, line):
 	m = reLine.search(line)
@@ -68,7 +80,7 @@ def parseLine(i, line):
 	ury = float(m.group(5))
 	fontsize = float(m.group(6))
 	text = m.group(7)
-	return base, llx, urx, lly, ury, fontsize, text, line
+	return i, base, llx, urx, lly, ury, fontsize, text, line
 
 def parseWord(i, line):
 	'word   0: serial=0 base=99.96 {143.54 177.69 741.93 756.27} fontsize=14.35 "High"'
@@ -107,10 +119,12 @@ def scan(path):
 				continue
 
 			if state == 2 and len(lines) == nLines:
-				blocks.append((header, block,  lines))
+				blocks.append((header, block, lines))
 				state = 0
 				lines = []
 				nLines = 0
+				# print('state=%d->%d: %2d of %2d lines >>%s<<' % (
+				# 	2, state, len(lines), nLines, line))
 
 			if state == 0:
 				m = reBlk0.search(line)
@@ -120,7 +134,7 @@ def scan(path):
 			elif state == 1:
 				block = parseBlock(i, line)
 				state = 2
-				nLines = block[6]
+				nLines = block[7]
 				lines = []
 			elif state == 2:
 				l1ne = parseLine(i, line)
@@ -171,18 +185,19 @@ for i in range(n):
 	header1, blk1, lines1 = blocks1[i]
 	header2, blk2, lines2 = blocks2[i]
 	assert header1 == header2, (header1, header2)
-	msg =  'i=%d "%s" blk1=%d blk2=%d\nlines1=\n%s\nliness2=\n%s' % (
-		i, header1, len(lines1), len(lines2),
+	msg = 'i=%d "%s"\n\tblk1=%s\n\tblk2=%s\nlines1=\n%s\nliness2=\n%s' % (
+		i, header1, blk1, blk2,
 		showLines(header1, lines1),
 		showLines(header2, lines2))
 
-	print('block %2d ----------- "%s"\n\t%s\n\t%s' % (i, header1, list(blk1), list(blk2)))
+	print('block %2d ----------- "%s"\n\t%d>>%s<<\n\t%d>>%s<<' %
+	      (i, header1, blk1[0], list(blk1[1:]), blk2[0], list(blk2[1:])))
 	# print('blk1=%d %s' % (len(blk1), list(blk1)))
 	assert len(lines1) == len(lines2), msg
 	m = len(lines1)
 
-	idx1, rot1, llx1, urx1, lly1, ury1, nLines1, nPools1 = blk1
-	idx2, rot2, llx2, urx2, lly2, ury2, nLines2, nPools2 = blk2
+	ib1, idx1, rot1, llx1, urx1, lly1, ury1, nLines1, nPools1 = blk1
+	ib2, idx2, rot2, llx2, urx2, lly2, ury2, nLines2, nPools2 = blk2
 	assert idx1 == idx2, msg
 	assert llx1 == llx2, msg
 	assert urx1 == urx2, msg
@@ -192,8 +207,8 @@ for i in range(n):
 
 	for j in range(m):
 		# print('blk1=%d %s' % (len(blk1[j]), blk1[j]))
-		base1, lx1, urx1, lly1, ury1, fontsize1, text1, line1 = lines1[j]
-		base2, lx2, urx2, lly2, ury2, fontsize2, text2, line2 = lines2[j]
+		il1, base1, lx1, urx1, lly1, ury1, fontsize1, text1, line1 = lines1[j]
+		il2, base2, lx2, urx2, lly2, ury2, fontsize2, text2, line2 = lines2[j]
 		msg = 'j=%d\n\tblk1=%s\n\tblk2=%s' % (j, lines1[j], lines2[j])
 
 		assert base1 == base2, msg
