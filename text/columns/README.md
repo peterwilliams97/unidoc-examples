@@ -1,4 +1,12 @@
-blocks are builr from pools
+Fix cmap
+
+Parse all chars that poppler parses e.g Th ligature
+kofax.pdf Remove duplicates  P R P R O O D D U U C C T T
+Garnaut.txt
+
+sunstein.txt for remove duplicate text, hyphenation
+
+blocks are built from pools
 flows are built from blocks
 frags are parts of lines?
 
@@ -14,10 +22,63 @@ TextPage::addChar shows word splitting
 TODO
 ====
 addChar -> addMark
-b1.pdf para order
+rot -> orient / 90
+handle hyphens
+
+b1.txt
+backlog.txt
+bare.txt
+clark_divvala.txt
+cloud.txt
+
+================================================================================
+62 files 12 bad
+   0: ../files/2020-03_edition-comparison-v9.pdf
+   1: ../files/CovidEconomics3.pdf
+   2: ../files/Nuance.pdf
+   3: ../files/bruce.pdf
+   4: ../files/coronaviruses.pdf
+   5: ../files/ecm.pdf
+   6: ../files/extract.pdf
+   7: ../files/fontline.pdf
+   8: ../files/kofax.pdf
+   9: ../files/rococo.pdf
+  10: ../files/sunstein.pdf
+  11: ../files/survey.pdf
 
 
+
+
+===============
+Garnaut.txt
+invoice.txt
+JobKeeper.txt
+Doig.txt
+eu.txt
+fontline.txt
+knime.txt
+kofax.txt
+logic.txt
+newsletter.txt
+Nuance.txt
+ocr.txt
+pandemic.txt
+privacy.txt
+pvc.txt
+radical.txt
 ---
+
+================================================================================
+59 files 7 bad
+   0: ../files/2020-03_edition-comparison-v9.pdf
+   1: ../files/CovidEconomics3.pdf
+   2: ../files/Yamashita2018_Article_ConvolutionalNeuralNetworksAnO.pdf
+   3: ../files/bruce.pdf
+   4: ../files/coronaviruses.pdf
+   5: ../files/ecm.pdf
+   6: ../files/survey.pdf
+
+============================================
 
 
 pioneer.pdf       Heading order
