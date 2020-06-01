@@ -7,6 +7,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/csv"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -50,13 +52,12 @@ const (
 
 func main() {
 	var (
-		firstPage, lastPage int
-		debug, trace        bool
-		outDir              string
-
-		doProfile bool
+		firstPage, lastPage     int
+		outDir, csvDir          string
+		debug, trace, doProfile bool
 	)
-	flag.StringVar(&outDir, "o", "./outtext", "Output text (default outtext)")
+	flag.StringVar(&outDir, "o", "./outtext", "Output text (default outtext). Set to \"\" to not save.")
+	flag.StringVar(&csvDir, "c", "./outcsv", "Output CSVs (default outtext). Set to \"\" to not save.")
 	flag.IntVar(&firstPage, "f", -1, "First page")
 	flag.IntVar(&lastPage, "l", 100000, "Last page")
 	flag.BoolVar(&debug, "d", false, "Print debugging information.")
@@ -84,18 +85,8 @@ func main() {
 		model.SetPdfCreator(companyName)
 	}
 
-	if outDir == "." || outDir == ".." {
-		panic(fmt.Errorf("outDir=%q not allowed", outDir))
-	}
-	if outDir != "" {
-		outDir, err := filepath.Abs(outDir)
-		if err != nil {
-			panic(fmt.Errorf("Abs failed. outDir=%q err=%w", outDir, err))
-		}
-		if err := os.MkdirAll(outDir, 0777); err != nil {
-			panic(fmt.Errorf("Couldn't create outDir=%q err=%w", outDir, err))
-		}
-	}
+	makeDir("outDir", outDir)
+	makeDir("csvDir", csvDir)
 
 	if doProfile {
 		f, err := os.Create("cpu.profile")
@@ -124,13 +115,14 @@ func main() {
 		}
 
 		outPath := changePath(outDir, filepath.Base(inPath), "", ".txt")
+		csvPath := changePath(csvDir, filepath.Base(inPath), "", "")
 		if strings.ToLower(filepath.Ext(outPath)) == ".pdf" {
 			panic(fmt.Errorf("output can't be PDF %q", outPath))
 		}
 		fmt.Printf("%4d of %d: %q\n", i+1, len(pathList), inPath)
 		fmt.Fprintf(os.Stderr, "\n%4d of %d: ", i+1, len(pathList))
 		t0 := time.Now()
-		err, important := extractDocText(inPath, outPath, firstPage, lastPage, false)
+		err, important := extractDocText(inPath, outPath, csvPath, firstPage, lastPage, false)
 		dt := time.Since(t0)
 		fmt.Fprintf(os.Stderr, ": %.1f sec", dt.Seconds())
 		if err != nil {
@@ -145,8 +137,9 @@ func main() {
 }
 
 // extractDocText extracts text columns pages `firstPage` to `lastPage` in PDF file `inPath` and
-// outputs the data as an annotated text file to `outPath`.
-func extractDocText(inPath, outPath string, firstPage, lastPage int, show bool) (error, bool) {
+//   - writes the extracted texe to `outPath`.
+//   - writes any extracted tables to `csvPath`
+func extractDocText(inPath, outPath, csvPath string, firstPage, lastPage int, show bool) (error, bool) {
 	common.Log.Info("extractDocText: inPath=%q [%d:%d]->%q", inPath, firstPage, lastPage, outPath)
 	fmt.Fprintf(os.Stderr, "%q [%d:%d]->%q %.2f MB, ",
 		inPath, firstPage, lastPage, outPath, fileSize(inPath))
@@ -176,20 +169,22 @@ func extractDocText(inPath, outPath string, firstPage, lastPage int, show bool) 
 	}
 
 	var pageTexts []string
+	var pageTables [][]string
 
 	for pageNum := firstPage; pageNum <= lastPage; pageNum++ {
 		fmt.Fprintf(os.Stderr, "%d ", pageNum)
-		text, err := getPageText(inPath, pdfReader, pageNum)
+		text, tables, err := extractPageContents(inPath, pdfReader, pageNum)
 		if err != nil {
-			return fmt.Errorf("getPageText failed. inPath=%q err=%w", inPath, err), true
+			return fmt.Errorf("extractPageContents failed. inPath=%q err=%w", inPath, err), true
 		}
 		pageTexts = append(pageTexts, text)
 		if show {
-			fmt.Println("------------------------------")
+			fmt.Println("----------------------------------------------------------------------")
 			fmt.Printf("Page %d:\n", pageNum)
 			fmt.Printf("\"%s\"\n", text)
-			fmt.Println("------------------------------")
+			fmt.Println("----------------------------------------------------------------------")
 		}
+		pageTables = append(pageTables, tables)
 	}
 
 	if outPath != "" {
@@ -198,25 +193,42 @@ func extractDocText(inPath, outPath string, firstPage, lastPage int, show bool) 
 			return fmt.Errorf("failed to write outPath=%q err=%w", outPath, err), true
 		}
 	}
+	if csvPath != "" {
+		for i, tables := range pageTables {
+			if len(tables) == 0 {
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "page%d: %d tables\n", i+1, len(pageTables))
+			for j, table := range tables {
+				csvPath := fmt.Sprintf("%s.page%d.table%d.csv", csvPath, i+1, j+1)
+				if err := ioutil.WriteFile(csvPath, []byte(table), 0666); err != nil {
+					return fmt.Errorf("failed to write csvPath=%q err=%w", csvPath, err), true
+				}
+			}
+		}
+	}
 	return nil, false
 }
 
-func getPageText(inPath string, pdfReader *model.PdfReader, pageNum int) (string, error) {
+// extractPageContents extracts the text and tables from (1-offset) page number `pageNum` in opened
+// PdfReader `pdfReader.
+// - The first return is the extracted text.
+// - The second return is the csv encoded contents of any tables found on the page.
+func extractPageContents(inPath string, pdfReader *model.PdfReader, pageNum int) (string, []string, error) {
 	page, err := pdfReader.GetPage(pageNum)
 	if err != nil {
-		return "", fmt.Errorf("GetPage failed. %q pageNum=%d err=%w", inPath, pageNum, err)
+		return "", nil, fmt.Errorf("GetPage failed. %q pageNum=%d err=%w", inPath, pageNum, err)
 	}
 
 	mbox, err := page.GetMediaBox()
 	if err != nil {
-		return "[COULDN'T PROCESS]", nil
-		return "", fmt.Errorf("GetMediaBox failed. %q pageNum=%d err=%w", inPath, pageNum, err)
+		return "[COULDN'T PROCESS]", nil, nil
 	}
 	if page.Rotate != nil && *page.Rotate == 90 {
 		// TODO: This is a "hack" to change the perspective of the extractor to account for the rotation.
 		contents, err := page.GetContentStreams()
 		if err != nil {
-			return "", fmt.Errorf("GetContentStreams failed. %q pageNum=%d err=%w", inPath, pageNum, err)
+			return "", nil, fmt.Errorf("GetContentStreams failed. %q pageNum=%d err=%w", inPath, pageNum, err)
 		}
 
 		cc := contentstream.NewContentCreator()
@@ -228,7 +240,7 @@ func getPageText(inPath string, pdfReader *model.PdfReader, pageNum int) (string
 
 		page.Duplicate()
 		if err = page.SetContentStreams(contents, core.NewRawEncoder()); err != nil {
-			return "", fmt.Errorf("SetContentStreams failed. %q pageNum=%d err=%w", inPath, pageNum, err)
+			return "", nil, fmt.Errorf("SetContentStreams failed. %q pageNum=%d err=%w", inPath, pageNum, err)
 		}
 		page.Rotate = nil
 	}
@@ -236,24 +248,42 @@ func getPageText(inPath string, pdfReader *model.PdfReader, pageNum int) (string
 	ex, err := extractor.New(page)
 	if err != nil {
 		if ignoreError(err) {
-			return "[COULDN'T PROCESS]", nil
+			return "[COULDN'T PROCESS]", nil, nil
 		}
-		return "", fmt.Errorf("extractor.New failed. %q pageNum=%d err=%w", inPath, pageNum, err)
+		return "", nil, fmt.Errorf("extractor.New failed. %q pageNum=%d err=%w", inPath, pageNum, err)
 	}
 	pageText, _, _, err := ex.ExtractPageText()
 	if err != nil {
 		if ignoreError(err) {
-			return "[COULDN'T PROCESS]", nil
+			return "[COULDN'T PROCESS]", nil, nil
 		}
-		return "", fmt.Errorf("ExtractPageText failed. %q pageNum=%d err=%w", inPath, pageNum, err)
+		return "", nil, fmt.Errorf("ExtractPageText failed. %q pageNum=%d err=%w", inPath, pageNum, err)
 	}
-	return pageText.Text(), nil
+	var tables []string
+	for _, table := range pageText.Tables() {
+		tables = append(tables, toCsv(table))
+	}
+	return pageText.Text(), tables, nil
 }
+
+// toCsv return the contents of `table` encoded as CSV.
+func toCsv(table extractor.TextTable) string {
+	b := new(bytes.Buffer)
+	csvwriter := csv.NewWriter(b)
+	// csvwriter.Comma = '\t'
+	for _, row := range table.Cells {
+		csvwriter.Write(row)
+	}
+	csvwriter.Flush()
+	return b.String()
+}
+
+// patternsToPaths returns the file paths matched by the patterns in `patternList`.
 func patternsToPaths(patternList []string) ([]string, error) {
 	var pathList []string
 	common.Log.Debug("patternList=%d", len(patternList))
 	for i, pattern := range patternList {
-		pattern = ExpandUser(pattern)
+		pattern = expandUser(pattern)
 		files, err := doublestar.Glob(pattern)
 		if err != nil {
 			common.Log.Error("PatternsToPaths: Glob failed. pattern=%#q err=%v", pattern, err)
@@ -261,9 +291,9 @@ func patternsToPaths(patternList []string) ([]string, error) {
 		}
 		common.Log.Debug("patternList[%d]=%q %d matches", i, pattern, len(files))
 		for _, filename := range files {
-			ok, err := RegularFile(filename)
+			ok, err := regularFile(filename)
 			if err != nil {
-				common.Log.Error("PatternsToPaths: RegularFile failed. pattern=%#q err=%v", pattern, err)
+				common.Log.Error("PatternsToPaths: regularFile failed. pattern=%#q err=%v", pattern, err)
 				return pathList, err
 			}
 			if !ok {
@@ -286,13 +316,13 @@ func getHomeDir() string {
 	return usr.HomeDir
 }
 
-// ExpandUser returns `filename` with "~"" replaced with user's home directory.
-func ExpandUser(filename string) string {
+// expandUser returns `filename` with "~"" replaced with user's home directory.
+func expandUser(filename string) string {
 	return strings.Replace(filename, "~", homeDir, -1)
 }
 
-// RegularFile returns true if file `filename` is a regular file.
-func RegularFile(filename string) (bool, error) {
+// regularFile returns true if file `filename` is a regular file.
+func regularFile(filename string) (bool, error) {
 	fi, err := os.Stat(filename)
 	if err != nil {
 		return false, err
@@ -318,6 +348,24 @@ func makeUsage(msg string) {
 	}
 }
 
+// makeDir creates `outDir`. Name is the name of `outDir` in the calling code.
+func makeDir(name, outDir string) {
+	if outDir == "." || outDir == ".." {
+		panic(fmt.Errorf("%s=%q not allowed", name, outDir))
+	}
+	if outDir == "" {
+		return
+	}
+
+	outDir, err := filepath.Abs(outDir)
+	if err != nil {
+		panic(fmt.Errorf("Abs failed. %s=%q err=%w", name, outDir, err))
+	}
+	if err := os.MkdirAll(outDir, 0777); err != nil {
+		panic(fmt.Errorf("Couldn't create %s=%q err=%w", name, outDir, err))
+	}
+}
+
 // changePath inserts `insertion` into `filename` before suffix `ext`.
 func changePath(dirName, filename, qualifier, ext string) string {
 	base := filepath.Base(filename)
@@ -332,6 +380,7 @@ func changePath(dirName, filename, qualifier, ext string) string {
 	return path
 }
 
+// ignoreError returns true if `err` should be ignored.
 func ignoreError(err error) bool {
 	if err == nil {
 		return true
