@@ -1,5 +1,5 @@
 /*
- * PDF to text: Extract all text for each page of a PDF file.
+ * PDF to text: Extract all text for each page of a pdf file.
  *
  * Run as: go run pdf_extract_text.go input.pdf
  */
@@ -7,6 +7,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/csv"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -50,10 +52,11 @@ const (
 func main() {
 	var (
 		firstPage, lastPage     int
-		outDir                  string
+		outDir, csvDir          string
 		debug, trace, doProfile bool
 	)
 	flag.StringVar(&outDir, "o", "./outtext", "Output text (default outtext). Set to \"\" to not save.")
+	flag.StringVar(&csvDir, "c", "./outcsv", "Output CSVs (default outtext). Set to \"\" to not save.")
 	flag.IntVar(&firstPage, "f", -1, "First page")
 	flag.IntVar(&lastPage, "l", 100000, "Last page")
 	flag.BoolVar(&debug, "d", false, "Print debugging information.")
@@ -82,6 +85,7 @@ func main() {
 	}
 
 	makeDir("outDir", outDir)
+	makeDir("csvDir", csvDir)
 
 	if doProfile {
 		f, err := os.Create("cpu.profile")
@@ -110,13 +114,14 @@ func main() {
 		}
 
 		outPath := changeDirExt(outDir, filepath.Base(inPath), "", ".txt")
+		csvPath := changeDirExt(csvDir, filepath.Base(inPath), "", "")
 		if strings.ToLower(filepath.Ext(outPath)) == ".pdf" {
 			panic(fmt.Errorf("output can't be PDF %q", outPath))
 		}
 		fmt.Printf("%4d of %d: %q\n", i+1, len(pathList), inPath)
 		fmt.Fprintf(os.Stderr, "\n%4d of %d: ", i+1, len(pathList))
 		t0 := time.Now()
-		err, important := extractDocText(inPath, outPath, firstPage, lastPage, false)
+		err, important := extractDocText(inPath, outPath, csvPath, firstPage, lastPage, false)
 		dt := time.Since(t0)
 		fmt.Fprintf(os.Stderr, ": %.1f sec", dt.Seconds())
 		if err != nil {
@@ -133,7 +138,7 @@ func main() {
 // extractDocText extracts text columns pages `firstPage` to `lastPage` in PDF file `inPath` and
 //   - writes the extracted texe to `outPath`.
 //   - writes any extracted tables to `csvPath`
-func extractDocText(inPath, outPath string, firstPage, lastPage int, show bool) (error, bool) {
+func extractDocText(inPath, outPath, csvPath string, firstPage, lastPage int, show bool) (error, bool) {
 	common.Log.Info("extractDocText: inPath=%q [%d:%d]->%q", inPath, firstPage, lastPage, outPath)
 	fmt.Fprintf(os.Stderr, "%q [%d:%d]->%q %.2f MB, ",
 		inPath, firstPage, lastPage, outPath, fileSize(inPath))
@@ -163,12 +168,13 @@ func extractDocText(inPath, outPath string, firstPage, lastPage int, show bool) 
 	}
 
 	var pageTexts []string
+	var pageTables [][]string
 
 	for pageNum := firstPage; pageNum <= lastPage; pageNum++ {
 		fmt.Fprintf(os.Stderr, "%d ", pageNum)
-		text, err := extractPageContents(inPath, pdfReader, pageNum)
+		text, tables, err := extractAllPageContents(inPath, pdfReader, pageNum)
 		if err != nil {
-			return fmt.Errorf("extractPageContents failed. inPath=%q err=%w", inPath, err), true
+			return fmt.Errorf("extractAllPageContents failed. inPath=%q err=%w", inPath, err), true
 		}
 		pageTexts = append(pageTexts, text)
 		if show {
@@ -177,6 +183,7 @@ func extractDocText(inPath, outPath string, firstPage, lastPage int, show bool) 
 			fmt.Printf("\"%s\"\n", text)
 			fmt.Println("----------------------------------------------------------------------")
 		}
+		pageTables = append(pageTables, tables)
 	}
 
 	if outPath != "" {
@@ -185,29 +192,43 @@ func extractDocText(inPath, outPath string, firstPage, lastPage int, show bool) 
 			return fmt.Errorf("failed to write outPath=%q err=%w", outPath, err), true
 		}
 	}
+	if csvPath != "" {
+		for i, tables := range pageTables {
+			if len(tables) == 0 {
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "page%d: %d tables\n", i+1, len(pageTables))
+			for j, table := range tables {
+				csvPath := fmt.Sprintf("%s.page%d.table%d.csv", csvPath, i+1, j+1)
+				if err := ioutil.WriteFile(csvPath, []byte(table), 0666); err != nil {
+					return fmt.Errorf("failed to write csvPath=%q err=%w", csvPath, err), true
+				}
+			}
+		}
+	}
 	return nil, false
 }
 
-// extractPageContents extracts the text and tables from (1-offset) page number `pageNum` in opened
+// extractAllPageContents extracts the text and tables from (1-offset) page number `pageNum` in opened
 // PdfReader `pdfReader.
 // - The first return is the extracted text.
 // - The second return is the csv encoded contents of any tables found on the page.
-func extractPageContents(inPath string, pdfReader *model.PdfReader, pageNum int) (string, error) {
+func extractAllPageContents(inPath string, pdfReader *model.PdfReader, pageNum int) (string, []string, error) {
 	page, err := pdfReader.GetPage(pageNum)
 	if err != nil {
-		return "", fmt.Errorf("GetPage failed. %q pageNum=%d err=%w", inPath, pageNum, err)
+		return "", nil, fmt.Errorf("GetPage failed. %q pageNum=%d err=%w", inPath, pageNum, err)
 	}
 
 	mbox, err := page.GetMediaBox()
 	if err != nil {
-		return "[COULDN'T PROCESS]", nil
+		return "[COULDN'T PROCESS]", nil, nil
 	}
 	fmt.Fprintf(os.Stderr, "%.0f ", *mbox)
 	if page.Rotate != nil && *page.Rotate == 90 {
 		// TODO: This is a "hack" to change the perspective of the extractor to account for the rotation.
 		contents, err := page.GetContentStreams()
 		if err != nil {
-			return "", fmt.Errorf("GetContentStreams failed. %q pageNum=%d err=%w", inPath, pageNum, err)
+			return "", nil, fmt.Errorf("GetContentStreams failed. %q pageNum=%d err=%w", inPath, pageNum, err)
 		}
 
 		cc := contentstream.NewContentCreator()
@@ -219,7 +240,7 @@ func extractPageContents(inPath string, pdfReader *model.PdfReader, pageNum int)
 
 		page.Duplicate()
 		if err = page.SetContentStreams(contents, core.NewRawEncoder()); err != nil {
-			return "", fmt.Errorf("SetContentStreams failed. %q pageNum=%d err=%w", inPath, pageNum, err)
+			return "", nil, fmt.Errorf("SetContentStreams failed. %q pageNum=%d err=%w", inPath, pageNum, err)
 		}
 		page.Rotate = nil
 	}
@@ -227,18 +248,37 @@ func extractPageContents(inPath string, pdfReader *model.PdfReader, pageNum int)
 	ex, err := extractor.New(page)
 	if err != nil {
 		if ignoreError(err) {
-			return "[COULDN'T PROCESS]", nil
+			return "[COULDN'T PROCESS]", nil, nil
 		}
-		return "", fmt.Errorf("extractor.New failed. %q pageNum=%d err=%w", inPath, pageNum, err)
+		return "", nil, fmt.Errorf("extractor.New failed. %q pageNum=%d err=%w", inPath, pageNum, err)
 	}
 	pageText, _, _, err := ex.ExtractPageText()
 	if err != nil {
 		if ignoreError(err) {
-			return "[COULDN'T PROCESS]", nil
+			return "[COULDN'T PROCESS]", nil, nil
 		}
-		return "", fmt.Errorf("ExtractPageText failed. %q pageNum=%d err=%w", inPath, pageNum, err)
+		return "", nil, fmt.Errorf("ExtractPageText failed. %q pageNum=%d err=%w", inPath, pageNum, err)
 	}
-	return pageText.Text(), nil
+	var tables []string
+	for _, table := range pageText.Tables() {
+		tables = append(tables, toCsv(table))
+	}
+	return pageText.Text(), tables, nil
+}
+
+// toCsv return the contents of `table` encoded as CSV.
+func toCsv(table extractor.TextTable) string {
+	b := new(bytes.Buffer)
+	csvwriter := csv.NewWriter(b)
+	// csvwriter.Comma = '\t'
+	for _, row := range table.Cells {
+		if len(row) != table.W {
+			panic(len(row))
+		}
+		csvwriter.Write(row)
+	}
+	csvwriter.Flush()
+	return b.String()
 }
 
 // patternsToPaths returns the file paths matched by the patterns in `patternList`.
