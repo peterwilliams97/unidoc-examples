@@ -102,13 +102,6 @@ func main() {
 	fmt.Fprintf(os.Stderr, "%d PDF files", len(pathList))
 
 	for i, inPath := range pathList {
-		if len(pathList) > startIndex && i < startIndex {
-			continue
-		}
-		if len(pathList) > 1 && isBadFile(inPath) {
-			continue
-		}
-
 		outPath := changeDirExt(outDir, filepath.Base(inPath), "", ".txt")
 		if strings.ToLower(filepath.Ext(outPath)) == ".pdf" {
 			panic(fmt.Errorf("output can't be PDF %q", outPath))
@@ -366,40 +359,3 @@ var ignorableErrors = []string{
 	"unsupported colorspace",
 	"invalid filter in multi filter array",
 }
-
-func isBadFile(inPath string) bool {
-	for _, fn := range badFiles {
-		if strings.Contains(inPath, fn) {
-			return true
-		}
-	}
-	return false
-}
-
-var badFiles = []string{
-	"/Users/peter/testdata/other/code/pdfbox/pdfbox/src/test/resources/input/sample_fonts_solidconvertor.pdf",
-	"/Users/peter/testdata/other/code/pdfbox/pdmodel",
-	"circularReferencesInResources.pdf",
-	"cmp_lab_spot_based_gradient.pdf",
-	"fallbackForBadColorSpace.pdf",
-	"itextpdf/text/pdf/parser/PdfTextExtractorUnicodeIdentityTest/user10.pdf",
-	"CompareToolTest/simple_pdf.pdf",
-	"PDFBOX-3964-c687766d68ac766be3f02aaec5e0d713_2.pdf",
-	"math_econ/theory.pdf",
-	"xarc/0607648.pdf",
-	"ud-test/testing/adobe.pdf.pdf",
-	"ud-test/transform/outpit/000012.pdf",
-	"ud-test/transform/outpit/0000",
-	"ud-test/transform/output",
-	"gazette.pdf",                  // media box not defined
-	"pingpdf.com_lima-peru.pdf",    // crazy dimensions
-	"cid_glyphs_2-7.pdf",           // default font is wrong for this Japanese text
-	"otf_glyphs_2-7.pdf",           // default font is wrong for this Japanese text
-	"genko_oc_shiryo1.pdf",         // Object name not starting with /
-	"isartor-6-3-2-t01-fail-a.pdf", //  pageNum=1 err=table not found: head
-	"isartor-6-3-2-t01-fail",
-	"js.pdf",           // err=invalid content stream object holder (*core.PdfObjectDictionary)
-	"pc-test/seg1.pdf", // err=invalid content stream object holder (*core.PdfObjectNull
-}
-
-const startIndex = 5000
