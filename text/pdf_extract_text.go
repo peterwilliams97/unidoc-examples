@@ -1,5 +1,5 @@
 /*
- * PDF to text: Extract all text for each page of a PDF file.
+ * Extract all text from the specified pages of one or more PDF files.
  *
  * Run as: go run pdf_extract_text.go input.pdf
  */
@@ -43,8 +43,12 @@ const (
 	// environment variables,  where UNIPDF_LICENSE_PATH points to the file containing the license
 	// key and the UNIPDF_CUSTOMER_NAME the explicitly specified customer name to which the key is
 	// licensed.
-	uniDocLicenseKey = ``
-	companyName      = ""
+	uniDocLicenseKey = `-----BEGIN UNIDOC LICENSE KEY-----
+eyJsaWNlbnNlX2lkIjoiYjZjNTllZGEtMGM5NC00MjMzLTYxZmMtYzE5NjdkODgwY2QzIiwiY3VzdG9tZXJfaWQiOiJjZDNlZmJiZi05NDIyLTQ0ZjEtNTcxYy05NzgyMmNkYWFlMjEiLCJjdXN0b21lcl9uYW1lIjoiUGFwZXJDdXQgU29mdHdhcmUgSW50ZXJuYXRpb25hbCBQdHkgTHRkIiwiY3VzdG9tZXJfZW1haWwiOiJhY2NvdW50c0BwYXBlcmN1dC5jb20iLCJ0aWVyIjoiYnVzaW5lc3MiLCJjcmVhdGVkX2F0IjoxNTYxNjY1NjI5LCJleHBpcmVzX2F0IjoxNTkzMzAyMzk5LCJjcmVhdG9yX25hbWUiOiJVbmlEb2MgU3VwcG9ydCIsImNyZWF0b3JfZW1haWwiOiJzdXBwb3J0QHVuaWRvYy5pbyIsInVuaXBkZiI6dHJ1ZSwidW5pb2ZmaWNlIjpmYWxzZSwidHJpYWwiOmZhbHNlfQ==
++
+jqfCPGZxtGEQ1hFui9dQLB9iPUhS715HPRW30eYpfiDKaM3SEpThz/GCLNj4dO3aZmE9UHF+ir4BRnOIA8lymRL8Y+690JBzJFfdE0nIqZGQ+NwrU3bRqkND94XWRE+eE+hkY6DnjNxr7DwyPnKyYMppVwHelMKI5s8GJZObVYbcXoDQOC0R5Z5ckL6BemmkE7I6Xna2jAVAl+YSgsoz6fyA6je71A2kqZmoYm5U1g7NfQQpkLZpClvC97tkIH7qeaf8xQNCN9hyMo0uYAFZ/pUJfzEjZDtWHqcYBIAdoKvE/IL7OcUZKqSGvKgmyvkvWeJqw4iw9p9nh8pDNc5nfQ==
+-----END UNIDOC LICENSE KEY-----`
+	companyName = "PaperCut Software International Pty Ltd"
 )
 
 func main() {
@@ -52,10 +56,12 @@ func main() {
 		firstPage, lastPage     int
 		outDir                  string
 		debug, trace, doProfile bool
+		repeats                 int
 	)
 	flag.StringVar(&outDir, "o", "./outtext", "Output text (default outtext). Set to \"\" to not save.")
 	flag.IntVar(&firstPage, "f", -1, "First page")
 	flag.IntVar(&lastPage, "l", 100000, "Last page")
+	flag.IntVar(&repeats, "r", 1, "repeat each page extraction this many time")
 	flag.BoolVar(&debug, "d", false, "Print debugging information.")
 	flag.BoolVar(&trace, "e", false, "Print detailed debugging information.")
 	flag.BoolVar(&doProfile, "p", false, "Save profiling information")
@@ -99,19 +105,20 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Fprintf(os.Stderr, "%d PDF files", len(pathList))
+	fmt.Printf("%d PDF files", len(pathList))
 
+	var performances []performance
+
+	t0 := time.Now()
 	for i, inPath := range pathList {
 		outPath := changeDirExt(outDir, filepath.Base(inPath), "", ".txt")
 		if strings.ToLower(filepath.Ext(outPath)) == ".pdf" {
 			panic(fmt.Errorf("output can't be PDF %q", outPath))
 		}
-		fmt.Printf("%4d of %d: %q\n", i+1, len(pathList), inPath)
-		fmt.Fprintf(os.Stderr, "\n%4d of %d: ", i+1, len(pathList))
-		t0 := time.Now()
-		err, important := extractDocText(inPath, outPath, firstPage, lastPage, false)
-		dt := time.Since(t0)
-		fmt.Fprintf(os.Stderr, ": %.1f sec", dt.Seconds())
+		fmt.Printf("%4d of %d: %q ", i+1, len(pathList), inPath)
+		var perf performance
+		err, important := extractDocText(inPath, outPath, firstPage, lastPage, repeats, false, &perf)
+		fmt.Printf(": %.1f sec\n", perf.dt)
 		if err != nil {
 			if important {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -119,18 +126,54 @@ func main() {
 			}
 			continue
 		}
+		performances = append(performances, perf)
+		// if len(performances)%20 == 0 {
+		// 	logPeformances(performances)
+		// }
 	}
-	fmt.Fprintf(os.Stderr, "\nDONE\n")
+	dt := time.Since(t0)
+	fmt.Printf("\nDONE %.1f seconds\n", dt.Seconds())
+	logPeformances(performances)
+}
+
+func logPeformances(performances []performance) {
+	sort.Slice(performances, func(i, j int) bool {
+		pi, pj := performances[i], performances[j]
+		if pi.perPage() != pj.perPage() {
+			return pi.perPage() > pj.perPage()
+		}
+		if pi.dt != pj.dt {
+			return pi.dt > pj.dt
+		}
+		return pi.name < pj.name
+	})
+	fmt.Printf("\n%d tests -------------------------\n", len(performances))
+	for i, p := range performances {
+		fmt.Printf("%4d: %s\n", i, p)
+	}
+}
+
+type performance struct {
+	name  string
+	dt    float64
+	pages int
+}
+
+func (p performance) perPage() float64 { return p.dt / float64(p.pages) }
+
+func (p performance) String() string {
+	return fmt.Sprintf("%2d pages %5.1f sec %5.2f sec/page %s", p.pages, p.dt, p.perPage(), p.name)
 }
 
 // extractDocText extracts text columns pages `firstPage` to `lastPage` in PDF file `inPath` and
 //   - writes the extracted texe to `outPath`.
 //   - writes any extracted tables to `csvPath`
-func extractDocText(inPath, outPath string, firstPage, lastPage int, show bool) (error, bool) {
-	common.Log.Info("extractDocText: inPath=%q [%d:%d]->%q", inPath, firstPage, lastPage, outPath)
-	fmt.Fprintf(os.Stderr, "%q [%d:%d]->%q %.2f MB, ",
+func extractDocText(inPath, outPath string, firstPage, lastPage, repeats int, show bool,
+	perf *performance) (error, bool) {
+	fmt.Printf("%q [%d:%d]->%q %.2f MB, ",
 		inPath, firstPage, lastPage, outPath, fileSize(inPath))
 
+	t0 := time.Now()
 	f, err := os.Open(inPath)
 	if err != nil {
 		return fmt.Errorf("Could not open %q err=%w", inPath, err), false
@@ -146,7 +189,7 @@ func extractDocText(inPath, outPath string, firstPage, lastPage int, show bool) 
 		return fmt.Errorf("GetNumPages failed. %q err=%w", inPath, err), false
 	}
 
-	fmt.Fprintf(os.Stderr, "%d pages:", numPages)
+	fmt.Printf("%d pages:", numPages)
 
 	if firstPage < 1 {
 		firstPage = 1
@@ -158,8 +201,8 @@ func extractDocText(inPath, outPath string, firstPage, lastPage int, show bool) 
 	var pageTexts []string
 
 	for pageNum := firstPage; pageNum <= lastPage; pageNum++ {
-		fmt.Fprintf(os.Stderr, "%d ", pageNum)
-		text, err := extractPageContents(inPath, pdfReader, pageNum)
+		fmt.Printf("%d ", pageNum)
+		text, err := extractPageContents(inPath, pdfReader, pageNum, repeats)
 		if err != nil {
 			return fmt.Errorf("extractPageContents failed. inPath=%q err=%w", inPath, err), true
 		}
@@ -171,6 +214,9 @@ func extractDocText(inPath, outPath string, firstPage, lastPage int, show bool) 
 			fmt.Println("----------------------------------------------------------------------")
 		}
 	}
+	perf.name = inPath
+	perf.pages = lastPage - firstPage + 1
+	perf.dt = time.Since(t0).Seconds()
 
 	if outPath != "" {
 		docText := strings.Join(pageTexts, "\n")
@@ -185,7 +231,18 @@ func extractDocText(inPath, outPath string, firstPage, lastPage int, show bool) 
 // PdfReader `pdfReader.
 // - The first return is the extracted text.
 // - The second return is the csv encoded contents of any tables found on the page.
-func extractPageContents(inPath string, pdfReader *model.PdfReader, pageNum int) (string, error) {
+func extractPageContents(inPath string, pdfReader *model.PdfReader, pageNum, repeats int) (string, error) {
+	var text string
+	var err error
+	for i := 0; i < repeats; i++ {
+		text, err = _extractPageContents(inPath, pdfReader, pageNum)
+		if err != nil {
+			return "", err
+		}
+	}
+	return text, nil
+}
+func _extractPageContents(inPath string, pdfReader *model.PdfReader, pageNum int) (string, error) {
 	page, err := pdfReader.GetPage(pageNum)
 	if err != nil {
 		return "", fmt.Errorf("GetPage failed. %q pageNum=%d err=%w", inPath, pageNum, err)
@@ -195,7 +252,7 @@ func extractPageContents(inPath string, pdfReader *model.PdfReader, pageNum int)
 	if err != nil {
 		return "[COULDN'T PROCESS]", nil
 	}
-	fmt.Fprintf(os.Stderr, "%.0f ", *mbox)
+	// fmt.Printf( "%.0f ", *mbox)
 	if page.Rotate != nil && *page.Rotate == 90 {
 		// TODO: This is a "hack" to change the perspective of the extractor to account for the rotation.
 		contents, err := page.GetContentStreams()
@@ -226,9 +283,9 @@ func extractPageContents(inPath string, pdfReader *model.PdfReader, pageNum int)
 	}
 	pageText, _, _, err := ex.ExtractPageText()
 	if err != nil {
-		if ignoreError(err) {
-			return "[COULDN'T PROCESS]", nil
-		}
+		// if ignoreError(err) {
+		// 	return "[COULDN'T PROCESS]", nil
+		// }
 		return "", fmt.Errorf("ExtractPageText failed. %q pageNum=%d err=%w", inPath, pageNum, err)
 	}
 	return pageText.Text(), nil

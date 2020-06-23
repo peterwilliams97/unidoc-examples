@@ -1,7 +1,7 @@
 /*
- * PDF to text: Extract all text for each page of a pdf file.
+ * Extract all text and tables from the specified pages of one or more PDF files.
  *
- * Run as: go run pdf_extract_text.go input.pdf
+ * Run as: go run pdf_tables_text.go input.pdf
  */
 
 package main
@@ -30,7 +30,7 @@ import (
 )
 
 const (
-	usage = "Usage: go run pdf_extract_text.go [options] <file1.pdf> <file2.pdf> ...\n"
+	usage = "Usage: go run pdf_tables_text.go [options] <file1.pdf> <file2.pdf> ...\n"
 	// Make sure to enter a valid license key.
 	// Otherwise text is truncated and a watermark added to the text.
 	// License keys are available via: https://unidoc.io
@@ -45,8 +45,12 @@ const (
 	// environment variables,  where UNIPDF_LICENSE_PATH points to the file containing the license
 	// key and the UNIPDF_CUSTOMER_NAME the explicitly specified customer name to which the key is
 	// licensed.
-	uniDocLicenseKey = ``
-	companyName      = ""
+	uniDocLicenseKey = `-----BEGIN UNIDOC LICENSE KEY-----
+eyJsaWNlbnNlX2lkIjoiYjZjNTllZGEtMGM5NC00MjMzLTYxZmMtYzE5NjdkODgwY2QzIiwiY3VzdG9tZXJfaWQiOiJjZDNlZmJiZi05NDIyLTQ0ZjEtNTcxYy05NzgyMmNkYWFlMjEiLCJjdXN0b21lcl9uYW1lIjoiUGFwZXJDdXQgU29mdHdhcmUgSW50ZXJuYXRpb25hbCBQdHkgTHRkIiwiY3VzdG9tZXJfZW1haWwiOiJhY2NvdW50c0BwYXBlcmN1dC5jb20iLCJ0aWVyIjoiYnVzaW5lc3MiLCJjcmVhdGVkX2F0IjoxNTYxNjY1NjI5LCJleHBpcmVzX2F0IjoxNTkzMzAyMzk5LCJjcmVhdG9yX25hbWUiOiJVbmlEb2MgU3VwcG9ydCIsImNyZWF0b3JfZW1haWwiOiJzdXBwb3J0QHVuaWRvYy5pbyIsInVuaXBkZiI6dHJ1ZSwidW5pb2ZmaWNlIjpmYWxzZSwidHJpYWwiOmZhbHNlfQ==
++
+jqfCPGZxtGEQ1hFui9dQLB9iPUhS715HPRW30eYpfiDKaM3SEpThz/GCLNj4dO3aZmE9UHF+ir4BRnOIA8lymRL8Y+690JBzJFfdE0nIqZGQ+NwrU3bRqkND94XWRE+eE+hkY6DnjNxr7DwyPnKyYMppVwHelMKI5s8GJZObVYbcXoDQOC0R5Z5ckL6BemmkE7I6Xna2jAVAl+YSgsoz6fyA6je71A2kqZmoYm5U1g7NfQQpkLZpClvC97tkIH7qeaf8xQNCN9hyMo0uYAFZ/pUJfzEjZDtWHqcYBIAdoKvE/IL7OcUZKqSGvKgmyvkvWeJqw4iw9p9nh8pDNc5nfQ==
+-----END UNIDOC LICENSE KEY-----`
+	companyName = "PaperCut Software International Pty Ltd"
 )
 
 func main() {
@@ -54,11 +58,13 @@ func main() {
 		firstPage, lastPage     int
 		outDir, csvDir          string
 		debug, trace, doProfile bool
+		repeats                 int
 	)
 	flag.StringVar(&outDir, "o", "./outtext", "Output text (default outtext). Set to \"\" to not save.")
 	flag.StringVar(&csvDir, "c", "./outcsv", "Output CSVs (default outtext). Set to \"\" to not save.")
 	flag.IntVar(&firstPage, "f", -1, "First page")
 	flag.IntVar(&lastPage, "l", 100000, "Last page")
+	flag.IntVar(&repeats, "r", 1, "repeat each page extraction this many time")
 	flag.BoolVar(&debug, "d", false, "Print debugging information.")
 	flag.BoolVar(&trace, "e", false, "Print detailed debugging information.")
 	flag.BoolVar(&doProfile, "p", false, "Save profiling information")
@@ -103,7 +109,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Fprintf(os.Stderr, "%d PDF files", len(pathList))
+	fmt.Printf("%d PDF files", len(pathList))
 
 	for i, inPath := range pathList {
 		if len(pathList) > startIndex && i < startIndex {
@@ -118,12 +124,11 @@ func main() {
 		if strings.ToLower(filepath.Ext(outPath)) == ".pdf" {
 			panic(fmt.Errorf("output can't be PDF %q", outPath))
 		}
-		fmt.Printf("%4d of %d: %q\n", i+1, len(pathList), inPath)
-		fmt.Fprintf(os.Stderr, "\n%4d of %d: ", i+1, len(pathList))
+		fmt.Printf("%4d of %d: %q", i+1, len(pathList), inPath)
 		t0 := time.Now()
 		err, important := extractDocText(inPath, outPath, csvPath, firstPage, lastPage, false)
 		dt := time.Since(t0)
-		fmt.Fprintf(os.Stderr, ": %.1f sec", dt.Seconds())
+		fmt.Printf(": %.1f sec", dt.Seconds())
 		if err != nil {
 			if important {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -131,16 +136,16 @@ func main() {
 			}
 			continue
 		}
+		fmt.Println()
 	}
-	fmt.Fprintf(os.Stderr, "\nDONE\n")
+	fmt.Println("\nDONE\n")
 }
 
 // extractDocText extracts text columns pages `firstPage` to `lastPage` in PDF file `inPath` and
 //   - writes the extracted texe to `outPath`.
 //   - writes any extracted tables to `csvPath`
 func extractDocText(inPath, outPath, csvPath string, firstPage, lastPage int, show bool) (error, bool) {
-	common.Log.Info("extractDocText: inPath=%q [%d:%d]->%q", inPath, firstPage, lastPage, outPath)
-	fmt.Fprintf(os.Stderr, "%q [%d:%d]->%q %.2f MB, ",
+	fmt.Printf("%q [%d:%d]->%q %.2f MB, ",
 		inPath, firstPage, lastPage, outPath, fileSize(inPath))
 
 	f, err := os.Open(inPath)
@@ -158,7 +163,7 @@ func extractDocText(inPath, outPath, csvPath string, firstPage, lastPage int, sh
 		return fmt.Errorf("GetNumPages failed. %q err=%w", inPath, err), false
 	}
 
-	fmt.Fprintf(os.Stderr, "%d pages:", numPages)
+	fmt.Printf("%d pages:", numPages)
 
 	if firstPage < 1 {
 		firstPage = 1
@@ -171,7 +176,7 @@ func extractDocText(inPath, outPath, csvPath string, firstPage, lastPage int, sh
 	var pageTables [][]string
 
 	for pageNum := firstPage; pageNum <= lastPage; pageNum++ {
-		fmt.Fprintf(os.Stderr, "%d ", pageNum)
+		fmt.Printf("%d ", pageNum)
 		text, tables, err := extractAllPageContents(inPath, pdfReader, pageNum)
 		if err != nil {
 			return fmt.Errorf("extractAllPageContents failed. inPath=%q err=%w", inPath, err), true
@@ -197,7 +202,7 @@ func extractDocText(inPath, outPath, csvPath string, firstPage, lastPage int, sh
 			if len(tables) == 0 {
 				continue
 			}
-			fmt.Fprintf(os.Stderr, "page%d: %d tables\n", i+1, len(pageTables))
+			fmt.Printf("page%d: %d tables\n", i+1, len(pageTables))
 			for j, table := range tables {
 				csvPath := fmt.Sprintf("%s.page%d.table%d.csv", csvPath, i+1, j+1)
 				if err := ioutil.WriteFile(csvPath, []byte(table), 0666); err != nil {
@@ -223,7 +228,7 @@ func extractAllPageContents(inPath string, pdfReader *model.PdfReader, pageNum i
 	if err != nil {
 		return "[COULDN'T PROCESS]", nil, nil
 	}
-	fmt.Fprintf(os.Stderr, "%.0f ", *mbox)
+	fmt.Printf("%.0f ", *mbox)
 	if page.Rotate != nil && *page.Rotate == 90 {
 		// TODO: This is a "hack" to change the perspective of the extractor to account for the rotation.
 		contents, err := page.GetContentStreams()
@@ -263,6 +268,11 @@ func extractAllPageContents(inPath string, pdfReader *model.PdfReader, pageNum i
 	for _, table := range pageText.Tables() {
 		tables = append(tables, toCsv(table))
 	}
+	// marks := pageText.Marks().Elements()
+	// common.Log.Info("%d marks =====================")
+	// for i, tm := range marks {
+	// 	fmt.Printf("%4d: %s\n", i, tm.String())
+	// }
 	return pageText.Text(), tables, nil
 }
 
@@ -271,10 +281,16 @@ func toCsv(table extractor.TextTable) string {
 	b := new(bytes.Buffer)
 	csvwriter := csv.NewWriter(b)
 	// csvwriter.Comma = '\t'
-	for _, row := range table.Cells {
+	for y, row := range table.Cells {
 		if len(row) != table.W {
-			panic(len(row))
+			err := fmt.Errorf("table = %d x %d row[%d]=%d %d", table.W, table.H, y, len(row), row)
+			panic(err)
 		}
+		csvwriter.Write(row)
+	}
+
+	csvwriter := csv.NewWriter(b)
+	for _, row := range table.Cells {
 		csvwriter.Write(row)
 	}
 	csvwriter.Flush()
@@ -369,20 +385,21 @@ func makeDir(name, outDir string) {
 	}
 }
 
-// changeDirExt inserts `insertion` into `filename` before suffix `ext`.
-func changeDirExt(dirName, filename, qualifier, ext string) string {
+// changeDirExt inserts `qualifier` into `filename` before its extension then changes its
+// directory to `dirName` and extrension to `extName`,
+func changeDirExt(dirName, filename, qualifier, extName string) string {
 	if dirName == "" {
 		return ""
 	}
 	base := filepath.Base(filename)
-	oxt := filepath.Ext(base)
-	base = base[:len(base)-len(oxt)]
+	ext := filepath.Ext(base)
+	base = base[:len(base)-len(ext)]
 	if len(qualifier) > 0 {
 		base = fmt.Sprintf("%s.%s", base, qualifier)
 	}
-	filename = fmt.Sprintf("%s%s", base, ext)
+	filename = fmt.Sprintf("%s%s", base, extName)
 	path := filepath.Join(dirName, filename)
-	common.Log.Debug("changeDirExt(%q,%q,%q)->%q", dirName, base, ext, path)
+	common.Log.Debug("changeDirExt(%q,%q,%q)->%q", dirName, base, extName, path)
 	return path
 }
 
@@ -442,4 +459,4 @@ var badFiles = []string{
 	"pc-test/seg1.pdf", // err=invalid content stream object holder (*core.PdfObjectNull
 }
 
-const startIndex = 5000
+const startIndex = 0
