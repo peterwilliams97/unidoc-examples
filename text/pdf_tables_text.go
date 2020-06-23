@@ -45,12 +45,8 @@ const (
 	// environment variables,  where UNIPDF_LICENSE_PATH points to the file containing the license
 	// key and the UNIPDF_CUSTOMER_NAME the explicitly specified customer name to which the key is
 	// licensed.
-	uniDocLicenseKey = `-----BEGIN UNIDOC LICENSE KEY-----
-eyJsaWNlbnNlX2lkIjoiYjZjNTllZGEtMGM5NC00MjMzLTYxZmMtYzE5NjdkODgwY2QzIiwiY3VzdG9tZXJfaWQiOiJjZDNlZmJiZi05NDIyLTQ0ZjEtNTcxYy05NzgyMmNkYWFlMjEiLCJjdXN0b21lcl9uYW1lIjoiUGFwZXJDdXQgU29mdHdhcmUgSW50ZXJuYXRpb25hbCBQdHkgTHRkIiwiY3VzdG9tZXJfZW1haWwiOiJhY2NvdW50c0BwYXBlcmN1dC5jb20iLCJ0aWVyIjoiYnVzaW5lc3MiLCJjcmVhdGVkX2F0IjoxNTYxNjY1NjI5LCJleHBpcmVzX2F0IjoxNTkzMzAyMzk5LCJjcmVhdG9yX25hbWUiOiJVbmlEb2MgU3VwcG9ydCIsImNyZWF0b3JfZW1haWwiOiJzdXBwb3J0QHVuaWRvYy5pbyIsInVuaXBkZiI6dHJ1ZSwidW5pb2ZmaWNlIjpmYWxzZSwidHJpYWwiOmZhbHNlfQ==
-+
-jqfCPGZxtGEQ1hFui9dQLB9iPUhS715HPRW30eYpfiDKaM3SEpThz/GCLNj4dO3aZmE9UHF+ir4BRnOIA8lymRL8Y+690JBzJFfdE0nIqZGQ+NwrU3bRqkND94XWRE+eE+hkY6DnjNxr7DwyPnKyYMppVwHelMKI5s8GJZObVYbcXoDQOC0R5Z5ckL6BemmkE7I6Xna2jAVAl+YSgsoz6fyA6je71A2kqZmoYm5U1g7NfQQpkLZpClvC97tkIH7qeaf8xQNCN9hyMo0uYAFZ/pUJfzEjZDtWHqcYBIAdoKvE/IL7OcUZKqSGvKgmyvkvWeJqw4iw9p9nh8pDNc5nfQ==
------END UNIDOC LICENSE KEY-----`
-	companyName = "PaperCut Software International Pty Ltd"
+	uniDocLicenseKey = ``
+	companyName      = ""
 )
 
 func main() {
@@ -111,6 +107,9 @@ func main() {
 	}
 	fmt.Printf("%d PDF files", len(pathList))
 
+	var performances []performance
+
+	t0 := time.Now()
 	for i, inPath := range pathList {
 		if len(pathList) > startIndex && i < startIndex {
 			continue
@@ -124,11 +123,10 @@ func main() {
 		if strings.ToLower(filepath.Ext(outPath)) == ".pdf" {
 			panic(fmt.Errorf("output can't be PDF %q", outPath))
 		}
-		fmt.Printf("%4d of %d: %q", i+1, len(pathList), inPath)
-		t0 := time.Now()
-		err, important := extractDocText(inPath, outPath, csvPath, firstPage, lastPage, false)
-		dt := time.Since(t0)
-		fmt.Printf(": %.1f sec", dt.Seconds())
+		fmt.Printf("%4d of %d: %q ", i+1, len(pathList), inPath)
+		var perf performance
+		err, important := extractDocText(inPath, outPath, csvPath, firstPage, lastPage, repeats, false, &perf)
+		fmt.Printf(": %.1f sec\n", perf.dt)
 		if err != nil {
 			if important {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -136,18 +134,54 @@ func main() {
 			}
 			continue
 		}
-		fmt.Println()
+		performances = append(performances, perf)
+		// if len(performances)%20 == 0 {
+		// 	logPeformances(performances)
+		// }
 	}
-	fmt.Println("\nDONE\n")
+	dt := time.Since(t0)
+	fmt.Printf("\nDONE %.1f seconds\n", dt.Seconds())
+	logPeformances(performances)
+}
+
+func logPeformances(performances []performance) {
+	sort.Slice(performances, func(i, j int) bool {
+		pi, pj := performances[i], performances[j]
+		if pi.perPage() != pj.perPage() {
+			return pi.perPage() > pj.perPage()
+		}
+		if pi.dt != pj.dt {
+			return pi.dt > pj.dt
+		}
+		return pi.name < pj.name
+	})
+	fmt.Printf("\n%d tests -------------------------\n", len(performances))
+	for i, p := range performances {
+		fmt.Printf("%4d: %s\n", i, p)
+	}
+}
+
+type performance struct {
+	name  string
+	dt    float64
+	pages int
+}
+
+func (p performance) perPage() float64 { return p.dt / float64(p.pages) }
+
+func (p performance) String() string {
+	return fmt.Sprintf("%2d pages %5.1f sec %5.2f sec/page %s", p.pages, p.dt, p.perPage(), p.name)
 }
 
 // extractDocText extracts text columns pages `firstPage` to `lastPage` in PDF file `inPath` and
 //   - writes the extracted texe to `outPath`.
 //   - writes any extracted tables to `csvPath`
-func extractDocText(inPath, outPath, csvPath string, firstPage, lastPage int, show bool) (error, bool) {
+func extractDocText(inPath, outPath, csvPath string, firstPage, lastPage, repeats int, show bool,
+	perf *performance) (error, bool) {
 	fmt.Printf("%q [%d:%d]->%q %.2f MB, ",
 		inPath, firstPage, lastPage, outPath, fileSize(inPath))
 
+	t0 := time.Now()
 	f, err := os.Open(inPath)
 	if err != nil {
 		return fmt.Errorf("Could not open %q err=%w", inPath, err), false
@@ -177,7 +211,7 @@ func extractDocText(inPath, outPath, csvPath string, firstPage, lastPage int, sh
 
 	for pageNum := firstPage; pageNum <= lastPage; pageNum++ {
 		fmt.Printf("%d ", pageNum)
-		text, tables, err := extractAllPageContents(inPath, pdfReader, pageNum)
+		text, tables, err := extractAllPageContents(inPath, pdfReader, pageNum, repeats)
 		if err != nil {
 			return fmt.Errorf("extractAllPageContents failed. inPath=%q err=%w", inPath, err), true
 		}
@@ -190,6 +224,9 @@ func extractDocText(inPath, outPath, csvPath string, firstPage, lastPage int, sh
 		}
 		pageTables = append(pageTables, tables)
 	}
+	perf.name = inPath
+	perf.pages = lastPage - firstPage + 1
+	perf.dt = time.Since(t0).Seconds()
 
 	if outPath != "" {
 		docText := strings.Join(pageTexts, "\n")
@@ -218,7 +255,20 @@ func extractDocText(inPath, outPath, csvPath string, firstPage, lastPage int, sh
 // PdfReader `pdfReader.
 // - The first return is the extracted text.
 // - The second return is the csv encoded contents of any tables found on the page.
-func extractAllPageContents(inPath string, pdfReader *model.PdfReader, pageNum int) (string, []string, error) {
+func extractAllPageContents(inPath string, pdfReader *model.PdfReader, pageNum, repeats int) (string, []string, error) {
+	var text string
+	var tables []string
+	var err error
+	for i := 0; i < repeats; i++ {
+		text, tables, err = _extractAllPageContents(inPath, pdfReader, pageNum)
+		if err != nil {
+			return "", nil, err
+		}
+	}
+	return text, tables, nil
+}
+
+func _extractAllPageContents(inPath string, pdfReader *model.PdfReader, pageNum int) (string, []string, error) {
 	page, err := pdfReader.GetPage(pageNum)
 	if err != nil {
 		return "", nil, fmt.Errorf("GetPage failed. %q pageNum=%d err=%w", inPath, pageNum, err)
@@ -286,11 +336,6 @@ func toCsv(table extractor.TextTable) string {
 			err := fmt.Errorf("table = %d x %d row[%d]=%d %d", table.W, table.H, y, len(row), row)
 			panic(err)
 		}
-		csvwriter.Write(row)
-	}
-
-	csvwriter := csv.NewWriter(b)
-	for _, row := range table.Cells {
 		csvwriter.Write(row)
 	}
 	csvwriter.Flush()

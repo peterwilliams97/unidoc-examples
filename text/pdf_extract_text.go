@@ -43,12 +43,8 @@ const (
 	// environment variables,  where UNIPDF_LICENSE_PATH points to the file containing the license
 	// key and the UNIPDF_CUSTOMER_NAME the explicitly specified customer name to which the key is
 	// licensed.
-	uniDocLicenseKey = `-----BEGIN UNIDOC LICENSE KEY-----
-eyJsaWNlbnNlX2lkIjoiYjZjNTllZGEtMGM5NC00MjMzLTYxZmMtYzE5NjdkODgwY2QzIiwiY3VzdG9tZXJfaWQiOiJjZDNlZmJiZi05NDIyLTQ0ZjEtNTcxYy05NzgyMmNkYWFlMjEiLCJjdXN0b21lcl9uYW1lIjoiUGFwZXJDdXQgU29mdHdhcmUgSW50ZXJuYXRpb25hbCBQdHkgTHRkIiwiY3VzdG9tZXJfZW1haWwiOiJhY2NvdW50c0BwYXBlcmN1dC5jb20iLCJ0aWVyIjoiYnVzaW5lc3MiLCJjcmVhdGVkX2F0IjoxNTYxNjY1NjI5LCJleHBpcmVzX2F0IjoxNTkzMzAyMzk5LCJjcmVhdG9yX25hbWUiOiJVbmlEb2MgU3VwcG9ydCIsImNyZWF0b3JfZW1haWwiOiJzdXBwb3J0QHVuaWRvYy5pbyIsInVuaXBkZiI6dHJ1ZSwidW5pb2ZmaWNlIjpmYWxzZSwidHJpYWwiOmZhbHNlfQ==
-+
-jqfCPGZxtGEQ1hFui9dQLB9iPUhS715HPRW30eYpfiDKaM3SEpThz/GCLNj4dO3aZmE9UHF+ir4BRnOIA8lymRL8Y+690JBzJFfdE0nIqZGQ+NwrU3bRqkND94XWRE+eE+hkY6DnjNxr7DwyPnKyYMppVwHelMKI5s8GJZObVYbcXoDQOC0R5Z5ckL6BemmkE7I6Xna2jAVAl+YSgsoz6fyA6je71A2kqZmoYm5U1g7NfQQpkLZpClvC97tkIH7qeaf8xQNCN9hyMo0uYAFZ/pUJfzEjZDtWHqcYBIAdoKvE/IL7OcUZKqSGvKgmyvkvWeJqw4iw9p9nh8pDNc5nfQ==
------END UNIDOC LICENSE KEY-----`
-	companyName = "PaperCut Software International Pty Ltd"
+	uniDocLicenseKey = ``
+	companyName      = ""
 )
 
 func main() {
