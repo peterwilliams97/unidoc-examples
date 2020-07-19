@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/unidoc/unipdf/v3/common"
 	unicommon "github.com/unidoc/unipdf/v3/common"
@@ -55,9 +56,9 @@ func splicePDFs(imagePath, textPath, outPath string) error {
 	}
 	for i, page := range textPages {
 		imagePage := imagePages[i]
-		// if err := stripImages(page); err != nil {
-		// 	return err
-		// }
+		if err := stripImages(page); err != nil {
+			return err
+		}
 		if err := addImages(page, imagePage); err != nil {
 			return err
 		}
@@ -65,7 +66,7 @@ func splicePDFs(imagePath, textPath, outPath string) error {
 	return writePages(outPath, textPages)
 }
 
-// stripImages adds the images from `imagePage` to `page`.
+// addImages adds the images from `imagePage` to `page`.
 func addImages(page, imagePage *pdf.PdfPage) error {
 	// For each page, we go through the resources and look for the images.
 	imageAllContents, err := imagePage.GetAllContentStreams()
@@ -93,15 +94,20 @@ func addImages(page, imagePage *pdf.PdfPage) error {
 	// common.Log.Info("    contents=%s", contents)
 	common.Log.Info("imageContents=%s", string(imageContents))
 
-	// pageContents, err := page.GetAllContentStreams()
-	// if err != nil {
-	// 	return err
-	// }
+	pageContents, err := page.GetAllContentStreams()
+	if err != nil {
+		return err
+	}
 
 	page.SetContentStreams([]string{
-		// pageContents,
+		pageContents,
 		string(imageContents)},
 		pdfcore.NewFlateEncoder())
+
+	// page.SetContentStreams([]string{
+	// 	pageContents,
+	// 	string(imageContents)},
+	// 	nil)
 
 	if true {
 		contents, err := page.GetAllContentStreams()
@@ -159,7 +165,7 @@ func extractContentStreamImages(contents string, resources *pdf.PdfPageResources
 	return processedOperations.Bytes(), nil
 }
 
-// stripImages strips the images out of `page`.
+// stripImages removes the images out in `page`.
 func stripImages(page *pdf.PdfPage) error {
 	// For each page, we go through the resources and look for the images.
 	contents, err := page.GetAllContentStreams()
@@ -268,33 +274,31 @@ func readPages(inPath string) ([]*pdf.PdfPage, error) {
 		}
 		common.Log.Info("%.0f %d", *mbox, *page.Rotate)
 
-		if page.Rotate != nil && (*page.Rotate == 90 || *page.Rotate == 270) {
-			// TODO: This is a "hack" to change the perspective of the extractor to account for the rotation.
+		if page.Rotate != nil && *page.Rotate != 0 {
+			//  This is a "hack" to change the perspective of the extractor to account for the rotation.
+			cc := contentstream.NewContentCreator()
+			switch *page.Rotate {
+			case 90:
+				cc.Add_cm(0, -1, 1, 0, 0, mbox.Width())
+				mbox.Llx, mbox.Lly = mbox.Lly, mbox.Llx
+				mbox.Urx, mbox.Ury = mbox.Ury, mbox.Urx
+			case 180:
+				cc.Add_cm(-1, 0, 0, -1, mbox.Width(), mbox.Height())
+			case 270:
+				cc.Add_cm(0, 1, -1, 0, mbox.Height(), 0)
+				mbox.Llx, mbox.Lly = mbox.Lly, mbox.Llx
+				mbox.Urx, mbox.Ury = mbox.Ury, mbox.Urx
+
+			}
+			rotateOps := cc.Operations().String()
+
 			contents, err := page.GetContentStreams()
 			if err != nil {
 				return nil, fmt.Errorf("GetContentStreams failed. %q pageNum=%d err=%w", inPath, pageNum, err)
 			}
-
-			cc := contentstream.NewContentCreator()
-			// // cc.Add_cm(0, 1, 1, 0, 0, 0)
-			// // cc.Add_cm(1, 0, 0, -1, 0, 0)
-			// //  1  0  x  0  1   =  0  1
-			// //  0 -1     1  0      -1 0
-			// cc.Add_cm(0, 1, -1, 0, 0, 0)
-			// cc.Translate(0, -mbox.Height())
-			if *page.Rotate == 270 {
-				cc.Add_cm(0, 1, -1, 0, mbox.Height(), 0)
-			} else {
-				cc.Add_cm(0, -1, 1, 0, 0, mbox.Width())
-			}
-			// cc.Add_cm(-1, 0, 0, -1, 1, 1)
-			// // cc.Translate(mbox.Width()/2, mbox.Height()/2)
-			// cc.RotateDeg(-float64(*page.Rotate))
-			// // cc.Translate(-mbox.Height()/2, -mbox.Width()/2)
-			rotateOps := cc.Operations().String()
 			contents = append([]string{rotateOps}, contents...)
 
-			page.Duplicate()
+			page = page.Duplicate()
 			if err = page.SetContentStreams(contents, core.NewRawEncoder()); err != nil {
 				return nil, fmt.Errorf("SetContentStreams failed. %q pageNum=%d err=%w", inPath, pageNum, err)
 			}
@@ -306,6 +310,9 @@ func readPages(inPath string) ([]*pdf.PdfPage, error) {
 }
 
 func writePages(outPath string, pages []*pdf.PdfPage) error {
+	pdf.SetIsPDFA(true)
+	pdf.SetPdfCreationDate(time.Now())
+	pdf.SetPdfModifiedDate(time.Now().Add(time.Second))
 	pdfWriter := pdf.NewPdfWriter()
 	for _, page := range pages {
 		if err := pdfWriter.AddPage(page); err != nil {
@@ -319,3 +326,7 @@ func writePages(outPath string, pages []*pdf.PdfPage) error {
 	defer f.Close()
 	return pdfWriter.Write(f)
 }
+
+//  160171 18 Jul 13:11 image.pdf   (Xerox mixed raster)
+// 1296640 18 Jul 13:11 text.pdf    (PaperCut OCR)
+//  167405 19 Jul 18:51 spliced.pdf (Xerox images + PaperCut text)
