@@ -129,6 +129,11 @@ func splicePDFs(imagePath, textPath, outPath string, clearContent bool) error {
 				return fmt.Errorf("splicePDFs: textPath=%q page %d (%w)", textPath, i+1, err)
 			}
 		}
+		if imagePage != nil {
+			if err := stripText(imagePage); err != nil {
+				return fmt.Errorf("splicePDFs: textPath=%q page %d (%w)", imagePath, i+1, err)
+			}
+		}
 		if err := addImages(textPage, imagePage, clearContent); err != nil {
 			return fmt.Errorf("splicePDFs: %q page %d (%w)", textPath, i+1, err)
 		}
@@ -157,28 +162,23 @@ func stripImages(page *model.PdfPage) error {
 }
 
 // addImages adds the images from `imagePage` to `page`.
-func addImages(textPage, imagePage *model.PdfPage, clearContent bool) error {
+func stripText(page *model.PdfPage) error {
 	// For each page, we go through the resources and look for the images.
-	var pageContents, imageContents string
-
-	if imagePage != nil {
-		contents, err := imagePage.GetAllContentStreams()
-		if err != nil {
-			return fmt.Errorf("addImages (%w)", err)
-		}
-		// common.Log.Info("image contents ------------------\n%s", imageAllContents)
-		imageContents, err = extractContentStreamImages(contents, imagePage.Resources)
-		if err != nil {
-			return fmt.Errorf("addImages (%w)", err)
-		}
-
-		// imageContents, err = removeContentStreamImages(imageContents, imagePage.Resources)
-		// if err != nil {
-		// 	return fmt.Errorf("addImages (%w)", err)
-		// }
+	contents, err := page.GetAllContentStreams()
+	if err != nil {
+		return fmt.Errorf("stripText (%w)", err)
 	}
+	strippedContent, err := extractContentStreamImages(contents, page.Resources)
+	if err != nil {
+		return fmt.Errorf("stripText (%w)", err)
+	}
+	page.SetContentStreams([]string{strippedContent}, core.NewFlateEncoder())
+	return nil
+}
 
-	if textPage != nil {
+func addImages(textPage, imagePage *model.PdfPage, clearContent bool) error {
+	var pageContents, imageContents string
+	if textPage != nil && imagePage != nil {
 		pageXobjs := core.TraceToDirectObject(textPage.Resources.XObject)
 		// common.Log.Info("xobjs=%T", pageXobjs)
 		pageDict, ok := core.GetDict(pageXobjs)
@@ -196,11 +196,21 @@ func addImages(textPage, imagePage *model.PdfPage, clearContent bool) error {
 			obj := imageDict.Get(name)
 			pageDict.Set(name, obj)
 		}
-
+	}
+	if textPage != nil {
 		// common.Log.Info("    contents=%s", contents)
 		// common.& ("imageContents=%s", string(imageContents))
 		var err error
 		pageContents, err = textPage.GetAllContentStreams()
+		if err != nil {
+			return fmt.Errorf("addImages (%w)", err)
+		}
+	}
+	if imagePage != nil {
+		// common.Log.Info("    contents=%s", contents)
+		// common.& ("imageContents=%s", string(imageContents))
+		var err error
+		imageContents, err = imagePage.GetAllContentStreams()
 		if err != nil {
 			return fmt.Errorf("addImages (%w)", err)
 		}
@@ -212,15 +222,19 @@ func addImages(textPage, imagePage *model.PdfPage, clearContent bool) error {
 	}
 	var outContents []string
 	if pageContents != "" {
-		// common.Log.Info("================ pageContents", pageContents)
+		common.Log.Info("================ pageContents", pageContents)
 		outContents = append(outContents, pageContents)
 	}
 	if imageContents != "" {
-		// common.Log.Info("================ imageContents\n%s", imageContents)
+		common.Log.Info("================ imageContents\n%s", imageContents)
 		outContents = append(outContents, imageContents)
 	}
 
-	// common.Log.Info("outContents=%d", len(outContents))
+	common.Log.Info("outContents=%d textPage=%t imagePage=%t",
+		len(outContents), textPage != nil, imagePage != nil)
+	if len(outContents) == 0 {
+		panic("empty")
+	}
 
 	page := textPage
 	if page == nil {
@@ -234,8 +248,8 @@ func addImages(textPage, imagePage *model.PdfPage, clearContent bool) error {
 		if err != nil {
 			panic(err)
 		}
-		common.Log.Info("spliced contents ------------------\n%s", contents)
-		// panic("done")
+		common.Log.Info("spliced contents ------------------ \n%s", contents)
+		panic("done")
 	}
 	return nil
 }
@@ -267,6 +281,7 @@ func extractContentStreamImages(contents string, resources *model.PdfPageResourc
 	if has {
 		for _, name := range fontDict.Keys() {
 			common.Log.Info("remaining font %#q", name)
+			panic("fonts")
 		}
 	}
 	resources.Font = nil
