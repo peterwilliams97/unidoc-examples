@@ -41,17 +41,23 @@ const (
 	// key and the UNIPDF_CUSTOMER_NAME the explicitly specified customer name to which the key is
 	// licensed.
 	uniDocLicenseKey = ``
-	companyName      = ""
+	companyName      = "PaperCut Software International Pty Ltd"
 )
 
 func main() {
+	var imagePath, textPath, outPath string
 	var debug, trace bool
+	var clearContent bool
+	flag.StringVar(&imagePath, "i", "", "Image PDF.")
+	flag.StringVar(&textPath, "t", "", "Text PDF.")
+	flag.StringVar(&outPath, "o", "", "Outpu PDF.")
 	flag.BoolVar(&debug, "d", false, "Print debugging information.")
 	flag.BoolVar(&trace, "e", false, "Print detailed debugging information.")
+	flag.BoolVar(&clearContent, "c", false, "Don't encode content streams.")
 	makeUsage(usage)
 	flag.Parse()
-	args := flag.Args()
-	if len(args) < 3 {
+
+	if outPath == "" || (imagePath == "" && textPath == "") {
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -65,16 +71,12 @@ func main() {
 
 	if uniDocLicenseKey != "" {
 		if err := license.SetLicenseKey(uniDocLicenseKey, companyName); err != nil {
-			panic(fmt.Errorf("error loading UniDoc license: err=%w", err))
+			common.Log.Error("error loading UniDoc license: err=%v", err)
 		}
-		model.SetPdfCreator(companyName)
 	}
+	model.SetPdfCreator(companyName)
 
-	imagePath := args[0]
-	textPath := args[1]
-	outPath := args[2]
-
-	err := splicePDFs(imagePath, textPath, outPath)
+	err := splicePDFs(imagePath, textPath, outPath, clearContent)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed: err=%v\n", err)
 		os.Exit(1)
@@ -85,7 +87,7 @@ func main() {
 
 // splicePDFs combines the images from PDF `imagePath` with everything but the images from PDF
 // `textPath` and writes the resulting PDF to `outPath`.
-func splicePDFs(imagePath, textPath, outPath string) error {
+func splicePDFs(imagePath, textPath, outPath string, clearContent bool) error {
 	imagePages, err := readPages(imagePath)
 	if err != nil {
 		return fmt.Errorf("splicePDFs: (%w)", err)
@@ -94,28 +96,49 @@ func splicePDFs(imagePath, textPath, outPath string) error {
 	if err != nil {
 		return err
 	}
-	if len(textPages) != len(imagePages) {
+	if imagePages != nil && textPages != nil && len(textPages) != len(imagePages) {
 		return fmt.Errorf("splicePDFs: imagePath=%q has %d pages textPath=%q has %d pages",
 			imagePath, len(imagePages), textPath, len(textPages))
 	}
-	for i, textPage := range textPages {
-		imagePage := imagePages[i]
-		tbox, _ := textPage.GetMediaBox()
-		ibox, _ := imagePage.GetMediaBox()
-		if !equalRects(*tbox, *ibox) {
-			return fmt.Errorf("splicePDFs: page sizes different %q page %d MediaBox=%.1f != %q page %d MediaBox=%.1f",
-				imagePath, i+1, *ibox,
-				textPath, i+1, *tbox)
+	var numPages int
+	if imagePages != nil {
+		numPages = len(imagePages)
+	} else {
+		numPages = len(textPages)
+	}
 
+	outPages := make([]*model.PdfPage, numPages)
+	for i := 0; i < numPages; i++ {
+		var imagePage, textPage *model.PdfPage
+		if imagePages != nil {
+			imagePage = imagePages[i]
 		}
-		if err := stripImages(textPage); err != nil {
-			return fmt.Errorf("splicePDFs: textPath=%q page %d (%w)", textPath, i+1, err)
+		if textPages != nil {
+			textPage = textPages[i]
 		}
-		if err := addImages(textPage, imagePage); err != nil {
+		if imagePage != nil && textPage != nil {
+			tbox, _ := textPage.GetMediaBox()
+			ibox, _ := imagePage.GetMediaBox()
+			if !equalRects(*tbox, *ibox) {
+				return fmt.Errorf("splicePDFs: page sizes different %q page %d MediaBox=%.1f != %q page %d MediaBox=%.1f",
+					imagePath, i+1, *ibox, textPath, i+1, *tbox)
+			}
+		}
+		if textPage != nil {
+			if err := stripImages(textPage); err != nil {
+				return fmt.Errorf("splicePDFs: textPath=%q page %d (%w)", textPath, i+1, err)
+			}
+		}
+		if err := addImages(textPage, imagePage, clearContent); err != nil {
 			return fmt.Errorf("splicePDFs: %q page %d (%w)", textPath, i+1, err)
 		}
+		page := textPage
+		if page == nil {
+			page = imagePage
+		}
+		outPages[i] = page
 	}
-	return writePages(outPath, textPages)
+	return writePages(outPath, outPages)
 }
 
 // stripImages removes the images from `page`.
@@ -125,7 +148,7 @@ func stripImages(page *model.PdfPage) error {
 	if err != nil {
 		return fmt.Errorf("stripImages (%w)", err)
 	}
-	strippedContent, err := stripContentStreamImages(contents, page.Resources)
+	strippedContent, err := removeContentStreamImages(contents, page.Resources)
 	if err != nil {
 		return fmt.Errorf("stripImages (%w)", err)
 	}
@@ -134,53 +157,73 @@ func stripImages(page *model.PdfPage) error {
 }
 
 // addImages adds the images from `imagePage` to `page`.
-func addImages(page, imagePage *model.PdfPage) error {
+func addImages(textPage, imagePage *model.PdfPage, clearContent bool) error {
 	// For each page, we go through the resources and look for the images.
-	imageAllContents, err := imagePage.GetAllContentStreams()
-	if err != nil {
-		return fmt.Errorf("addImages (%w)", err)
-	}
-	// common.Log.Info("image contents ------------------\n%s", imageAllContents)
-	imageContents, err := extractContentStreamImages(imageAllContents, imagePage.Resources)
-	if err != nil {
-		return fmt.Errorf("addImages (%w)", err)
-	}
+	var pageContents, imageContents string
 
-	pageXobjs := core.TraceToDirectObject(page.Resources.XObject)
-	// common.Log.Info("xobjs=%T", pageXobjs)
-	pageDict, ok := core.GetDict(pageXobjs)
-	if !ok {
-		return fmt.Errorf("addImages pageXobjs is not a dict %T", pageXobjs)
-	}
-	imageXobjs := core.TraceToDirectObject(imagePage.Resources.XObject)
-	// common.Log.Info("xobjs=%T", imageXobjs)
-	imageDict, ok := core.GetDict(imageXobjs)
-	if !ok {
-		return fmt.Errorf("addImages imageXobjs is not a dict %T", imageXobjs)
+	if imagePage != nil {
+		imageAllContents, err := imagePage.GetAllContentStreams()
+		if err != nil {
+			return fmt.Errorf("addImages (%w)", err)
+		}
+		// common.Log.Info("image contents ------------------\n%s", imageAllContents)
+		imageContentsBytes, err := extractContentStreamImages(imageAllContents, imagePage.Resources)
+		if err != nil {
+			return fmt.Errorf("addImages (%w)", err)
+		}
+		imageContents = string(imageContentsBytes)
 	}
 
-	for _, name := range imageDict.Keys() {
-		obj := imageDict.Get(name)
-		pageDict.Set(name, obj)
+	if textPage != nil {
+		pageXobjs := core.TraceToDirectObject(textPage.Resources.XObject)
+		// common.Log.Info("xobjs=%T", pageXobjs)
+		pageDict, ok := core.GetDict(pageXobjs)
+		if !ok {
+			return fmt.Errorf("addImages pageXobjs is not a dict %T", pageXobjs)
+		}
+		imageXobjs := core.TraceToDirectObject(imagePage.Resources.XObject)
+		// common.Log.Info("xobjs=%T", imageXobjs)
+		imageDict, ok := core.GetDict(imageXobjs)
+		if !ok {
+			return fmt.Errorf("addImages imageXobjs is not a dict %T", imageXobjs)
+		}
+
+		for _, name := range imageDict.Keys() {
+			obj := imageDict.Get(name)
+			pageDict.Set(name, obj)
+		}
+
+		// common.Log.Info("    contents=%s", contents)
+		// common.& ("imageContents=%s", string(imageContents))
+		var err error
+		pageContents, err = textPage.GetAllContentStreams()
+		if err != nil {
+			return fmt.Errorf("addImages (%w)", err)
+		}
 	}
 
-	// common.Log.Info("    contents=%s", contents)
-	// common.Log.Info("imageContents=%s", string(imageContents))
-
-	pageContents, err := page.GetAllContentStreams()
-	if err != nil {
-		return fmt.Errorf("addImages (%w)", err)
+	var encoder core.StreamEncoder
+	if !clearContent {
+		encoder = core.NewFlateEncoder()
+	}
+	var outContents []string
+	if pageContents != "" {
+		// common.Log.Info("================ pageContents", pageContents)
+		outContents = append(outContents, pageContents)
+	}
+	if imageContents != "" {
+		// common.Log.Info("================ imageContents\n%s", imageContents)
+		outContents = append(outContents, imageContents)
 	}
 
-	page.SetContentStreams([]string{
-		pageContents,
-		string(imageContents)},
-		core.NewFlateEncoder())
+	// common.Log.Info("outContents=%d", len(outContents))
 
-	// page.SetContentStreams([]string{
-	// 	pageContents,
-	// 	string(imageContents)},
-	// 	nil)
+	page := textPage
+	if page == nil {
+		page = imagePage
+	}
+
+	page.SetContentStreams(outContents, encoder)
 
 	if false {
 		contents, err := page.GetAllContentStreams()
@@ -193,6 +236,11 @@ func addImages(page, imagePage *model.PdfPage) error {
 	return nil
 }
 
+var (
+	opq = &contentstream.ContentStreamOperation{Operand: "q"}
+	opQ = &contentstream.ContentStreamOperation{Operand: "Q"}
+)
+
 // extractContentStreamImages returns a content stream containing the image operation from content
 // stream `contents`.
 func extractContentStreamImages(contents string, resources *model.PdfPageResources) ([]byte, error) {
@@ -203,6 +251,21 @@ func extractContentStreamImages(contents string, resources *model.PdfPageResourc
 	}
 	processedOperations := &contentstream.ContentStreamOperations{opq}
 	processedXObjects := map[string]bool{} // Keep track of processed XObjects to avoid repetition.
+
+	fontDict, has := core.GetDict(resources.Font)
+	if has {
+		for _, name := range fontDict.Keys() {
+			fontDict.Remove(name)
+			common.Log.Info("remove font %#q", name)
+		}
+	}
+	fontDict, has = core.GetDict(resources.Font)
+	if has {
+		for _, name := range fontDict.Keys() {
+			common.Log.Info("remaining font %#q", name)
+		}
+	}
+	resources.Font = nil
 
 	processor := contentstream.NewContentStreamProcessor(*operations)
 	processor.AddHandler(contentstream.HandlerConditionEnumAllOperands, "",
@@ -233,16 +296,19 @@ func extractContentStreamImages(contents string, resources *model.PdfPageResourc
 	return processedOperations.Bytes(), nil
 }
 
-// stripContentStreamImages the content stream `contents` with removes the images remvoved.
+// removeContentStreamImages the content stream `contents` with removes the images remvoved.
 // The images from `resources` are removed in place.
-func stripContentStreamImages(contents string, resources *model.PdfPageResources) ([]byte, error) {
+func removeContentStreamImages(contents string, resources *model.PdfPageResources) ([]byte, error) {
 	cstreamParser := contentstream.NewContentStreamParser(contents)
 	operations, err := cstreamParser.Parse()
 	if err != nil {
-		return nil, fmt.Errorf("stripContentStreamImages (%w)", err)
+		return nil, fmt.Errorf("removeContentStreamImages (%w)", err)
 	}
 	processedOperations := &contentstream.ContentStreamOperations{opq}
 	processedXObjects := map[string]bool{} // Keep track of processed XObjects to avoid repetition.
+
+	xobjs := core.TraceToDirectObject(resources.XObject)
+	xobjDict := xobjs.(*core.PdfObjectDictionary)
 
 	processor := contentstream.NewContentStreamProcessor(*operations)
 	processor.AddHandler(contentstream.HandlerConditionEnumAllOperands, "",
@@ -254,8 +320,6 @@ func stripContentStreamImages(contents string, resources *model.PdfPageResources
 					processedXObjects[string(*name)] = true
 					_, xtype := resources.GetXObjectByName(*name)
 					if xtype == model.XObjectTypeImage {
-						xobjs := core.TraceToDirectObject(resources.XObject)
-						xobjDict := xobjs.(*core.PdfObjectDictionary)
 						xobjDict.Remove(*name)
 						removed = true
 					}
@@ -269,7 +333,7 @@ func stripContentStreamImages(contents string, resources *model.PdfPageResources
 
 	err = processor.Process(resources)
 	if err != nil {
-		return nil, fmt.Errorf("stripContentStreamImages Process failed (%w)", err)
+		return nil, fmt.Errorf("removeContentStreamImages Process failed (%w)", err)
 	}
 	*processedOperations = append(*processedOperations, opQ)
 	return processedOperations.Bytes(), nil
@@ -277,6 +341,9 @@ func stripContentStreamImages(contents string, resources *model.PdfPageResources
 
 // readPages returns the pages in PDF file `inPath`.
 func readPages(inPath string) ([]*model.PdfPage, error) {
+	if inPath == "" {
+		return nil, nil
+	}
 	decorate := func(err error) error { return fmt.Errorf("readPages %q (%w)", inPath, err) }
 	f, err := os.Open(inPath)
 	if err != nil {
@@ -383,11 +450,6 @@ func writePages(outPath string, pages []*model.PdfPage) error {
 	}
 	return nil
 }
-
-var (
-	opq = &contentstream.ContentStreamOperation{Operand: "q"}
-	opQ = &contentstream.ContentStreamOperation{Operand: "Q"}
-)
 
 // equalRects returns true if `r1` and `r2` have the same coordinates. It allows for rounding errors.
 func equalRects(r1, r2 model.PdfRectangle) bool {
