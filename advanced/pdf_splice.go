@@ -152,7 +152,7 @@ func stripImages(page *model.PdfPage) error {
 	if err != nil {
 		return fmt.Errorf("stripImages (%w)", err)
 	}
-	page.SetContentStreams([]string{string(strippedContent)}, core.NewFlateEncoder())
+	page.SetContentStreams([]string{strippedContent}, core.NewFlateEncoder())
 	return nil
 }
 
@@ -162,16 +162,20 @@ func addImages(textPage, imagePage *model.PdfPage, clearContent bool) error {
 	var pageContents, imageContents string
 
 	if imagePage != nil {
-		imageAllContents, err := imagePage.GetAllContentStreams()
+		contents, err := imagePage.GetAllContentStreams()
 		if err != nil {
 			return fmt.Errorf("addImages (%w)", err)
 		}
 		// common.Log.Info("image contents ------------------\n%s", imageAllContents)
-		imageContentsBytes, err := extractContentStreamImages(imageAllContents, imagePage.Resources)
+		imageContents, err = extractContentStreamImages(contents, imagePage.Resources)
 		if err != nil {
 			return fmt.Errorf("addImages (%w)", err)
 		}
-		imageContents = string(imageContentsBytes)
+
+		// imageContents, err = removeContentStreamImages(imageContents, imagePage.Resources)
+		// if err != nil {
+		// 	return fmt.Errorf("addImages (%w)", err)
+		// }
 	}
 
 	if textPage != nil {
@@ -243,11 +247,11 @@ var (
 
 // extractContentStreamImages returns a content stream containing the image operation from content
 // stream `contents`.
-func extractContentStreamImages(contents string, resources *model.PdfPageResources) ([]byte, error) {
+func extractContentStreamImages(contents string, resources *model.PdfPageResources) (string, error) {
 	cstreamParser := contentstream.NewContentStreamParser(contents)
 	operations, err := cstreamParser.Parse()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	processedOperations := &contentstream.ContentStreamOperations{opq}
 	processedXObjects := map[string]bool{} // Keep track of processed XObjects to avoid repetition.
@@ -284,25 +288,29 @@ func extractContentStreamImages(contents string, resources *model.PdfPageResourc
 			}
 			if found {
 				*processedOperations = append(*processedOperations, op)
+				fmt.Printf("%d: %s\n", len(*processedOperations), op)
+				if op.Operand == "Tj" {
+					panic("text")
+				}
 			}
 			return nil
 		})
 
 	err = processor.Process(resources)
 	if err != nil {
-		return nil, fmt.Errorf("extractContentStreamImages Process failed (%w)", err)
+		return "", fmt.Errorf("extractContentStreamImages Process failed (%w)", err)
 	}
 	*processedOperations = append(*processedOperations, opQ)
-	return processedOperations.Bytes(), nil
+	return processedOperations.String(), nil
 }
 
 // removeContentStreamImages the content stream `contents` with removes the images remvoved.
 // The images from `resources` are removed in place.
-func removeContentStreamImages(contents string, resources *model.PdfPageResources) ([]byte, error) {
+func removeContentStreamImages(contents string, resources *model.PdfPageResources) (string, error) {
 	cstreamParser := contentstream.NewContentStreamParser(contents)
 	operations, err := cstreamParser.Parse()
 	if err != nil {
-		return nil, fmt.Errorf("removeContentStreamImages (%w)", err)
+		return "", fmt.Errorf("removeContentStreamImages (%w)", err)
 	}
 	processedOperations := &contentstream.ContentStreamOperations{opq}
 	processedXObjects := map[string]bool{} // Keep track of processed XObjects to avoid repetition.
@@ -333,10 +341,10 @@ func removeContentStreamImages(contents string, resources *model.PdfPageResource
 
 	err = processor.Process(resources)
 	if err != nil {
-		return nil, fmt.Errorf("removeContentStreamImages Process failed (%w)", err)
+		return "", fmt.Errorf("removeContentStreamImages Process failed (%w)", err)
 	}
 	*processedOperations = append(*processedOperations, opQ)
-	return processedOperations.Bytes(), nil
+	return processedOperations.String(), nil
 }
 
 // readPages returns the pages in PDF file `inPath`.
