@@ -88,58 +88,60 @@ func main() {
 // splicePDFs combines the images from PDF `imagePath` with everything but the images from PDF
 // `textPath` and writes the resulting PDF to `outPath`.
 func splicePDFs(imagePath, textPath, outPath string, clearContent bool) error {
+	var encoder core.StreamEncoder
+	if clearContent {
+		encoder = core.NewRawEncoder()
+	} else {
+		encoder = core.NewFlateEncoder()
+	}
+
 	imagePages, err := readPages(imagePath)
 	if err != nil {
 		return fmt.Errorf("splicePDFs: (%w)", err)
+	}
+	if imagePages != nil {
+		for i, page := range imagePages {
+			if err := stripText(page, encoder); err != nil {
+				return fmt.Errorf("splicePDFs: imagePath=%q page %d (%w)", imagePath, i+1, err)
+			}
+		}
 	}
 	textPages, err := readPages(textPath)
 	if err != nil {
 		return err
 	}
-	if imagePages != nil && textPages != nil && len(textPages) != len(imagePages) {
-		return fmt.Errorf("splicePDFs: imagePath=%q has %d pages textPath=%q has %d pages",
-			imagePath, len(imagePages), textPath, len(textPages))
-	}
-	var numPages int
-	if imagePages != nil {
-		numPages = len(imagePages)
-	} else {
-		numPages = len(textPages)
-	}
-
-	outPages := make([]*model.PdfPage, numPages)
-	for i := 0; i < numPages; i++ {
-		var imagePage, textPage *model.PdfPage
-		if imagePages != nil {
-			imagePage = imagePages[i]
-		}
-		if textPages != nil {
-			textPage = textPages[i]
-		}
-		if imagePage != nil && textPage != nil {
-			tbox, _ := textPage.GetMediaBox()
-			ibox, _ := imagePage.GetMediaBox()
-			if !equalRects(*tbox, *ibox) {
-				return fmt.Errorf("splicePDFs: page sizes different %q page %d MediaBox=%.1f != %q page %d MediaBox=%.1f",
-					imagePath, i+1, *ibox, textPath, i+1, *tbox)
-			}
-		}
-		if textPage != nil {
-			if err := stripImages(textPage); err != nil {
+	if textPages != nil {
+		for i, page := range textPages {
+			if err := stripImages(page, encoder); err != nil {
 				return fmt.Errorf("splicePDFs: textPath=%q page %d (%w)", textPath, i+1, err)
 			}
 		}
-		if imagePage != nil {
-			if err := stripText(imagePage); err != nil {
-				return fmt.Errorf("splicePDFs: textPath=%q page %d (%w)", imagePath, i+1, err)
-			}
+	}
+	if imagePages == nil {
+		return writePages(outPath, textPages)
+	} else if textPages == nil {
+		return writePages(outPath, imagePages)
+	}
+
+	if len(textPages) != len(imagePages) {
+		return fmt.Errorf("splicePDFs: imagePath=%q has %d pages textPath=%q has %d pages",
+			imagePath, len(imagePages), textPath, len(textPages))
+	}
+	numPages := len(imagePages)
+
+	outPages := make([]*model.PdfPage, numPages)
+	for i := 0; i < numPages; i++ {
+		imagePage := imagePages[i]
+		textPage := textPages[i]
+		tbox, _ := textPage.GetMediaBox()
+		ibox, _ := imagePage.GetMediaBox()
+		if !equalRects(*tbox, *ibox) {
+			return fmt.Errorf("splicePDFs: page sizes different %q page %d MediaBox=%.1f != %q page %d MediaBox=%.1f",
+				imagePath, i+1, *ibox, textPath, i+1, *tbox)
 		}
-		if err := addImages(textPage, imagePage, clearContent); err != nil {
+		page, err := combinePages(textPage, imagePage, encoder)
+		if err != nil {
 			return fmt.Errorf("splicePDFs: %q page %d (%w)", textPath, i+1, err)
-		}
-		page := textPage
-		if page == nil {
-			page = imagePage
 		}
 		outPages[i] = page
 	}
@@ -147,7 +149,7 @@ func splicePDFs(imagePath, textPath, outPath string, clearContent bool) error {
 }
 
 // stripImages removes the images from `page`.
-func stripImages(page *model.PdfPage) error {
+func stripImages(page *model.PdfPage, encoder core.StreamEncoder) error {
 	// For each page, we go through the resources and look for the images.
 	contents, err := page.GetAllContentStreams()
 	if err != nil {
@@ -157,12 +159,12 @@ func stripImages(page *model.PdfPage) error {
 	if err != nil {
 		return fmt.Errorf("stripImages (%w)", err)
 	}
-	page.SetContentStreams([]string{strippedContent}, core.NewFlateEncoder())
+	page.SetContentStreams([]string{strippedContent}, encoder)
 	return nil
 }
 
-// addImages adds the images from `imagePage` to `page`.
-func stripText(page *model.PdfPage) error {
+// combinePages adds the images from `imagePage` to `page`.
+func stripText(page *model.PdfPage, encoder core.StreamEncoder) error {
 	// For each page, we go through the resources and look for the images.
 	contents, err := page.GetAllContentStreams()
 	if err != nil {
@@ -172,75 +174,46 @@ func stripText(page *model.PdfPage) error {
 	if err != nil {
 		return fmt.Errorf("stripText (%w)", err)
 	}
-	page.SetContentStreams([]string{strippedContent}, core.NewFlateEncoder())
+	page.SetContentStreams([]string{strippedContent}, encoder)
 	return nil
 }
 
-func addImages(textPage, imagePage *model.PdfPage, clearContent bool) error {
-	var pageContents, imageContents string
-	if textPage != nil && imagePage != nil {
-		pageXobjs := core.TraceToDirectObject(textPage.Resources.XObject)
-		// common.Log.Info("xobjs=%T", pageXobjs)
-		pageDict, ok := core.GetDict(pageXobjs)
-		if !ok {
-			return fmt.Errorf("addImages pageXobjs is not a dict %T", pageXobjs)
-		}
-		imageXobjs := core.TraceToDirectObject(imagePage.Resources.XObject)
-		// common.Log.Info("xobjs=%T", imageXobjs)
-		imageDict, ok := core.GetDict(imageXobjs)
-		if !ok {
-			return fmt.Errorf("addImages imageXobjs is not a dict %T", imageXobjs)
-		}
-
-		for _, name := range imageDict.Keys() {
-			obj := imageDict.Get(name)
-			pageDict.Set(name, obj)
-		}
+func combinePages(textPage, imagePage *model.PdfPage, encoder core.StreamEncoder) (*model.PdfPage, error) {
+	pageXobjs := core.TraceToDirectObject(textPage.Resources.XObject)
+	pageDict, ok := core.GetDict(pageXobjs)
+	if !ok {
+		return nil, fmt.Errorf("combinePages pageXobjs is not a dict %T", pageXobjs)
 	}
-	if textPage != nil {
-		// common.Log.Info("    contents=%s", contents)
-		// common.& ("imageContents=%s", string(imageContents))
-		var err error
-		pageContents, err = textPage.GetAllContentStreams()
-		if err != nil {
-			return fmt.Errorf("addImages (%w)", err)
-		}
-	}
-	if imagePage != nil {
-		// common.Log.Info("    contents=%s", contents)
-		// common.& ("imageContents=%s", string(imageContents))
-		var err error
-		imageContents, err = imagePage.GetAllContentStreams()
-		if err != nil {
-			return fmt.Errorf("addImages (%w)", err)
-		}
+	imageXobjs := core.TraceToDirectObject(imagePage.Resources.XObject)
+	imageDict, ok := core.GetDict(imageXobjs)
+	if !ok {
+		return nil, fmt.Errorf("combinePages imageXobjs is not a dict %T", imageXobjs)
 	}
 
-	var encoder core.StreamEncoder
-	if !clearContent {
-		encoder = core.NewFlateEncoder()
-	}
-	var outContents []string
-	if pageContents != "" {
-		common.Log.Info("================ pageContents", pageContents)
-		outContents = append(outContents, pageContents)
-	}
-	if imageContents != "" {
-		common.Log.Info("================ imageContents\n%s", imageContents)
-		outContents = append(outContents, imageContents)
+	for _, name := range imageDict.Keys() {
+		obj := imageDict.Get(name)
+		pageDict.Set(name, obj)
 	}
 
+	// common.Log.Info("    contents=%s", contents)
+	// common.& ("imageContents=%s", string(imageContents))
+	pageContents, err := textPage.GetAllContentStreams()
+	if err != nil {
+		return nil, fmt.Errorf("combinePages (%w)", err)
+	}
+
+	// common.Log.Info("    contents=%s", contents)
+	// common.& ("imageContents=%s", string(imageContents))
+	imageContents, err := imagePage.GetAllContentStreams()
+	if err != nil {
+		return nil, fmt.Errorf("combinePages (%w)", err)
+	}
+
+	outContents := []string{pageContents, imageContents}
 	common.Log.Info("outContents=%d textPage=%t imagePage=%t",
 		len(outContents), textPage != nil, imagePage != nil)
-	if len(outContents) == 0 {
-		panic("empty")
-	}
 
 	page := textPage
-	if page == nil {
-		page = imagePage
-	}
-
 	page.SetContentStreams(outContents, encoder)
 
 	if false {
@@ -251,7 +224,7 @@ func addImages(textPage, imagePage *model.PdfPage, clearContent bool) error {
 		common.Log.Info("spliced contents ------------------ \n%s", contents)
 		panic("done")
 	}
-	return nil
+	return page, nil
 }
 
 var (
