@@ -88,34 +88,14 @@ func main() {
 // splicePDFs combines the images from PDF `imagePath` with everything but the images from PDF
 // `textPath` and writes the resulting PDF to `outPath`.
 func splicePDFs(imagePath, textPath, outPath string, clearContent bool) error {
-	var encoder core.StreamEncoder
-	if clearContent {
-		encoder = core.NewRawEncoder()
-	} else {
-		encoder = core.NewFlateEncoder()
-	}
-
-	imagePages, err := readPages(imagePath)
+	encoder := getEncoder(clearContent)
+	imagePages, err := readModifyPages(imagePath, encoder, extractContentStreamImages)
 	if err != nil {
-		return fmt.Errorf("splicePDFs: (%w)", err)
+		return fmt.Errorf("splicePDFs: imagePath (%w)", err)
 	}
-	if imagePages != nil {
-		for i, page := range imagePages {
-			if err := stripText(page, encoder); err != nil {
-				return fmt.Errorf("splicePDFs: imagePath=%q page %d (%w)", imagePath, i+1, err)
-			}
-		}
-	}
-	textPages, err := readPages(textPath)
+	textPages, err := readModifyPages(textPath, encoder, removeContentStreamImages)
 	if err != nil {
-		return err
-	}
-	if textPages != nil {
-		for i, page := range textPages {
-			if err := stripImages(page, encoder); err != nil {
-				return fmt.Errorf("splicePDFs: textPath=%q page %d (%w)", textPath, i+1, err)
-			}
-		}
+		return fmt.Errorf("splicePDFs: textPath (%w)", err)
 	}
 	if imagePages == nil {
 		return writePages(outPath, textPages)
@@ -123,12 +103,13 @@ func splicePDFs(imagePath, textPath, outPath string, clearContent bool) error {
 		return writePages(outPath, imagePages)
 	}
 
-	if len(textPages) != len(imagePages) {
+	// There are text and image pages.
+
+	if len(imagePages) != len(textPages) {
 		return fmt.Errorf("splicePDFs: imagePath=%q has %d pages textPath=%q has %d pages",
 			imagePath, len(imagePages), textPath, len(textPages))
 	}
 	numPages := len(imagePages)
-
 	outPages := make([]*model.PdfPage, numPages)
 	for i := 0; i < numPages; i++ {
 		imagePage := imagePages[i]
@@ -139,7 +120,7 @@ func splicePDFs(imagePath, textPath, outPath string, clearContent bool) error {
 			return fmt.Errorf("splicePDFs: page sizes different %q page %d MediaBox=%.1f != %q page %d MediaBox=%.1f",
 				imagePath, i+1, *ibox, textPath, i+1, *tbox)
 		}
-		page, err := combinePages(textPage, imagePage, encoder)
+		page, err := combinePages(imagePage, textPage, encoder)
 		if err != nil {
 			return fmt.Errorf("splicePDFs: %q page %d (%w)", textPath, i+1, err)
 		}
@@ -148,41 +129,23 @@ func splicePDFs(imagePath, textPath, outPath string, clearContent bool) error {
 	return writePages(outPath, outPages)
 }
 
-// stripImages removes the images from `page`.
-func stripImages(page *model.PdfPage, encoder core.StreamEncoder) error {
-	// For each page, we go through the resources and look for the images.
-	contents, err := page.GetAllContentStreams()
+// combinePages combines `imagePage` with `textPage`, encodes the combined page with `encoder` and
+// returns the resulting page.
+func combinePages(imagePage, textPage *model.PdfPage, encoder core.StreamEncoder) (*model.PdfPage, error) {
+	textContents, err := textPage.GetAllContentStreams()
 	if err != nil {
-		return fmt.Errorf("stripImages (%w)", err)
+		return nil, fmt.Errorf("combinePages (%w)", err)
 	}
-	strippedContent, err := removeContentStreamImages(contents, page.Resources)
+	imageContents, err := imagePage.GetAllContentStreams()
 	if err != nil {
-		return fmt.Errorf("stripImages (%w)", err)
+		return nil, fmt.Errorf("combinePages (%w)", err)
 	}
-	page.SetContentStreams([]string{strippedContent}, encoder)
-	return nil
-}
+	pageContents := []string{textContents, imageContents}
 
-// combinePages adds the images from `imagePage` to `page`.
-func stripText(page *model.PdfPage, encoder core.StreamEncoder) error {
-	// For each page, we go through the resources and look for the images.
-	contents, err := page.GetAllContentStreams()
-	if err != nil {
-		return fmt.Errorf("stripText (%w)", err)
-	}
-	strippedContent, err := extractContentStreamImages(contents, page.Resources)
-	if err != nil {
-		return fmt.Errorf("stripText (%w)", err)
-	}
-	page.SetContentStreams([]string{strippedContent}, encoder)
-	return nil
-}
-
-func combinePages(textPage, imagePage *model.PdfPage, encoder core.StreamEncoder) (*model.PdfPage, error) {
-	pageXobjs := core.TraceToDirectObject(textPage.Resources.XObject)
-	pageDict, ok := core.GetDict(pageXobjs)
+	textXobjs := core.TraceToDirectObject(textPage.Resources.XObject)
+	textDict, ok := core.GetDict(textXobjs)
 	if !ok {
-		return nil, fmt.Errorf("combinePages pageXobjs is not a dict %T", pageXobjs)
+		return nil, fmt.Errorf("combinePages pageXobjs is not a dict %T", textXobjs)
 	}
 	imageXobjs := core.TraceToDirectObject(imagePage.Resources.XObject)
 	imageDict, ok := core.GetDict(imageXobjs)
@@ -190,31 +153,19 @@ func combinePages(textPage, imagePage *model.PdfPage, encoder core.StreamEncoder
 		return nil, fmt.Errorf("combinePages imageXobjs is not a dict %T", imageXobjs)
 	}
 
+	pageDict := core.MakeDict()
 	for _, name := range imageDict.Keys() {
 		obj := imageDict.Get(name)
 		pageDict.Set(name, obj)
 	}
-
-	// common.Log.Info("    contents=%s", contents)
-	// common.& ("imageContents=%s", string(imageContents))
-	pageContents, err := textPage.GetAllContentStreams()
-	if err != nil {
-		return nil, fmt.Errorf("combinePages (%w)", err)
+	for _, name := range textDict.Keys() {
+		obj := textDict.Get(name)
+		pageDict.Set(name, obj)
 	}
 
-	// common.Log.Info("    contents=%s", contents)
-	// common.& ("imageContents=%s", string(imageContents))
-	imageContents, err := imagePage.GetAllContentStreams()
-	if err != nil {
-		return nil, fmt.Errorf("combinePages (%w)", err)
-	}
-
-	outContents := []string{pageContents, imageContents}
-	common.Log.Info("outContents=%d textPage=%t imagePage=%t",
-		len(outContents), textPage != nil, imagePage != nil)
-
-	page := textPage
-	page.SetContentStreams(outContents, encoder)
+	page := textPage.Duplicate()
+	page.Resources.XObject = pageDict
+	page.SetContentStreams(pageContents, encoder)
 
 	if false {
 		contents, err := page.GetAllContentStreams()
@@ -232,7 +183,7 @@ var (
 	opQ = &contentstream.ContentStreamOperation{Operand: "Q"}
 )
 
-// extractContentStreamImages returns a content stream containing the image operation from content
+// extractContentStreamImages returns a content stream containing the image operations from content
 // stream `contents`.
 func extractContentStreamImages(contents string, resources *model.PdfPageResources) (string, error) {
 	cstreamParser := contentstream.NewContentStreamParser(contents)
@@ -248,13 +199,6 @@ func extractContentStreamImages(contents string, resources *model.PdfPageResourc
 		for _, name := range fontDict.Keys() {
 			fontDict.Remove(name)
 			common.Log.Info("remove font %#q", name)
-		}
-	}
-	fontDict, has = core.GetDict(resources.Font)
-	if has {
-		for _, name := range fontDict.Keys() {
-			common.Log.Info("remaining font %#q", name)
-			panic("fonts")
 		}
 	}
 	resources.Font = nil
@@ -276,10 +220,6 @@ func extractContentStreamImages(contents string, resources *model.PdfPageResourc
 			}
 			if found {
 				*processedOperations = append(*processedOperations, op)
-				fmt.Printf("%d: %s\n", len(*processedOperations), op)
-				if op.Operand == "Tj" {
-					panic("text")
-				}
 			}
 			return nil
 		})
@@ -292,7 +232,7 @@ func extractContentStreamImages(contents string, resources *model.PdfPageResourc
 	return processedOperations.String(), nil
 }
 
-// removeContentStreamImages the content stream `contents` with removes the images remvoved.
+// removeContentStreamImages returns the content stream `contents` with the image references removed.
 // The images from `resources` are removed in place.
 func removeContentStreamImages(contents string, resources *model.PdfPageResources) (string, error) {
 	cstreamParser := contentstream.NewContentStreamParser(contents)
@@ -333,6 +273,41 @@ func removeContentStreamImages(contents string, resources *model.PdfPageResource
 	}
 	*processedOperations = append(*processedOperations, opQ)
 	return processedOperations.String(), nil
+}
+
+// readModifyPages reads the pages in PDF file `inPath`,  applies `modifier` to each, encodes each
+// page contents with `eoncoder` and returns the pagea.
+func readModifyPages(inPath string, encoder core.StreamEncoder, modifier pageModifier) (
+	[]*model.PdfPage, error) {
+	pages, err := readPages(inPath)
+	if err != nil {
+		return nil, fmt.Errorf("readModifyPages: (%w)", err)
+	}
+	if pages == nil {
+		return nil, nil
+	}
+	for i, page := range pages {
+		if err := modifyPage(page, encoder, modifier); err != nil {
+			return nil, fmt.Errorf("PdfPage: inPath=%q page %d (%w)", inPath, i+1, err)
+		}
+	}
+	return pages, nil
+}
+
+type pageModifier func(contents string, resources *model.PdfPageResources) (string, error)
+
+// modifyPage applies `modifier` to `page`. The page contents are encoded with `eoncoder`.
+func modifyPage(page *model.PdfPage, encoder core.StreamEncoder, modifier pageModifier) error {
+	contents, err := page.GetAllContentStreams()
+	if err != nil {
+		return fmt.Errorf("modifyPage (%w)", err)
+	}
+	strippedContent, err := modifier(contents, page.Resources)
+	if err != nil {
+		return fmt.Errorf("modifyPage (%w)", err)
+	}
+	page.SetContentStreams([]string{strippedContent}, encoder)
+	return nil
 }
 
 // readPages returns the pages in PDF file `inPath`.
@@ -389,7 +364,7 @@ func readPages(inPath string) ([]*model.PdfPage, error) {
 		// common.Log.Info("%.0f %d", *mbox, *page.Rotate)
 
 		if page.Rotate != nil && *page.Rotate != 0 {
-			// Normalize all pagees to no viewer rotation.
+			// Normalize all pages to no viewer rotation.
 			cc := contentstream.NewContentCreator()
 			switch *page.Rotate {
 			case 90:
@@ -402,17 +377,14 @@ func readPages(inPath string) ([]*model.PdfPage, error) {
 				cc.Add_cm(0, 1, -1, 0, mbox.Height(), 0)
 				mbox.Llx, mbox.Lly = mbox.Lly, mbox.Llx
 				mbox.Urx, mbox.Ury = mbox.Ury, mbox.Urx
-
 			}
 			rotateOps := cc.Operations().String()
-
 			contents, err := page.GetContentStreams()
 			if err != nil {
 				return nil, decorate(err)
 			}
 			contents = append([]string{rotateOps}, contents...)
-
-			page = page.Duplicate()
+			page = page.Duplicate() // XXX(peterwilliams97): Not necessary for this example as we don't reuse page.
 			if err = page.SetContentStreams(contents, nil); err != nil {
 				return nil, decorate(err)
 			}
@@ -452,6 +424,13 @@ func equalRects(r1, r2 model.PdfRectangle) bool {
 	const tol = 1.0e-3
 	eq := func(x1, x2 float64) bool { return math.Abs(x1-x2) < tol }
 	return eq(r1.Llx, r2.Llx) && eq(r1.Lly, r2.Lly) && eq(r1.Urx, r2.Urx) && eq(r1.Ury, r2.Ury)
+}
+
+func getEncoder(clearContent bool) core.StreamEncoder {
+	if clearContent {
+		return core.NewRawEncoder()
+	}
+	return core.NewFlateEncoder()
 }
 
 // makeUsage updates flag.Usage to include usage message `msg`.
