@@ -22,6 +22,9 @@ import (
 )
 
 const (
+	noBgd = false
+	noFgd = false
+
 	usage = `Splice the images from one PDF with everthing but the images from another model.
  go run pdf_splice.go <image pdf> <text pdf> <output pdf>
  e.g. go run pdf_splice.go images.pdf text.pdf spliced.pdf
@@ -48,6 +51,9 @@ func main() {
 	var imagePath, textPath, outPath string
 	var debug, trace bool
 	var clearContent bool
+	var firstPage, lastPage int
+	flag.IntVar(&firstPage, "f", -1, "First page")
+	flag.IntVar(&lastPage, "l", 100000, "Last page")
 	flag.StringVar(&imagePath, "i", "", "Image PDF.")
 	flag.StringVar(&textPath, "t", "", "Text PDF.")
 	flag.StringVar(&outPath, "o", "", "Outpu PDF.")
@@ -76,7 +82,7 @@ func main() {
 	}
 	model.SetPdfCreator(companyName)
 
-	err := splicePDFs(imagePath, textPath, outPath, clearContent)
+	err := splicePDFs(imagePath, textPath, outPath, firstPage, lastPage, clearContent)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed: err=%v\n", err)
 		os.Exit(1)
@@ -87,13 +93,13 @@ func main() {
 
 // splicePDFs combines the images from PDF `imagePath` with everything but the images from PDF
 // `textPath` and writes the resulting PDF to `outPath`.
-func splicePDFs(imagePath, textPath, outPath string, clearContent bool) error {
+func splicePDFs(imagePath, textPath, outPath string, firstPage, lastPage int, clearContent bool) error {
 	encoder := getEncoder(clearContent)
-	imagePages, err := readModifyPages(imagePath, encoder, extractContentStreamImages)
+	imagePages, err := readModifyPages(imagePath, firstPage, lastPage, encoder, extractContentStreamImages)
 	if err != nil {
 		return fmt.Errorf("splicePDFs: imagePath (%w)", err)
 	}
-	textPages, err := readModifyPages(textPath, encoder, removeContentStreamImages)
+	textPages, err := readModifyPages(textPath, firstPage, lastPage, encoder, removeContentStreamImages)
 	if err != nil {
 		return fmt.Errorf("splicePDFs: textPath (%w)", err)
 	}
@@ -111,6 +117,7 @@ func splicePDFs(imagePath, textPath, outPath string, clearContent bool) error {
 	}
 	numPages := len(imagePages)
 	outPages := make([]*model.PdfPage, numPages)
+
 	for i := 0; i < numPages; i++ {
 		imagePage := imagePages[i]
 		textPage := textPages[i]
@@ -118,7 +125,7 @@ func splicePDFs(imagePath, textPath, outPath string, clearContent bool) error {
 		ibox, _ := imagePage.GetMediaBox()
 		if !equalRects(*tbox, *ibox) {
 			return fmt.Errorf("splicePDFs: page sizes different %q page %d MediaBox=%.1f != %q page %d MediaBox=%.1f",
-				imagePath, i+1, *ibox, textPath, i+1, *tbox)
+				imagePath, i+firstPage, *ibox, textPath, i+1, *tbox)
 		}
 		page, err := combinePages(imagePage, textPage, encoder)
 		if err != nil {
@@ -203,6 +210,9 @@ func extractContentStreamImages(contents string, resources *model.PdfPageResourc
 	}
 	resources.Font = nil
 
+	xobjs := core.TraceToDirectObject(resources.XObject)
+	xobjDict := xobjs.(*core.PdfObjectDictionary)
+
 	processor := contentstream.NewContentStreamProcessor(*operations)
 	processor.AddHandler(contentstream.HandlerConditionEnumAllOperands, "",
 		func(op *contentstream.ContentStreamOperation, gs contentstream.GraphicsState, resources *model.PdfPageResources) error {
@@ -214,8 +224,24 @@ func extractContentStreamImages(contents string, resources *model.PdfPageResourc
 				name := op.Params[0].(*core.PdfObjectName)
 				if _, ok := processedXObjects[string(*name)]; !ok {
 					processedXObjects[string(*name)] = true
-					_, xtype := resources.GetXObjectByName(*name)
+					ximg, xtype := resources.GetXObjectByName(*name)
 					found = xtype == model.XObjectTypeImage
+					if found {
+						filter := ximg.Get("Filter")
+						isFgd := filter.String() == "JBIG2Decode" || filter.String() == "CCITTFaxDecode"
+						if (noFgd && isFgd) || (noBgd && !isFgd) {
+							found = false
+						}
+
+						if found {
+							w, _ := core.GetIntVal(ximg.Get("Width"))
+							h, _ := core.GetIntVal(ximg.Get("Height"))
+							common.Log.Debug("fiter=%#q %d x %d %q", filter.String(), w, h, ximg.Keys())
+						}
+					}
+					if !found {
+						xobjDict.Remove(*name)
+					}
 				}
 			}
 			if found {
@@ -277,9 +303,9 @@ func removeContentStreamImages(contents string, resources *model.PdfPageResource
 
 // readModifyPages reads the pages in PDF file `inPath`,  applies `modifier` to each, encodes each
 // page contents with `eoncoder` and returns the pagea.
-func readModifyPages(inPath string, encoder core.StreamEncoder, modifier pageModifier) (
+func readModifyPages(inPath string, firstPage, lastPage int, encoder core.StreamEncoder, modifier pageModifier) (
 	[]*model.PdfPage, error) {
-	pages, err := readPages(inPath)
+	pages, err := readPages(inPath, firstPage, lastPage)
 	if err != nil {
 		return nil, fmt.Errorf("readModifyPages: (%w)", err)
 	}
@@ -311,7 +337,7 @@ func modifyPage(page *model.PdfPage, encoder core.StreamEncoder, modifier pageMo
 }
 
 // readPages returns the pages in PDF file `inPath`.
-func readPages(inPath string) ([]*model.PdfPage, error) {
+func readPages(inPath string, firstPage, lastPage int) ([]*model.PdfPage, error) {
 	if inPath == "" {
 		return nil, nil
 	}
@@ -349,9 +375,14 @@ func readPages(inPath string) ([]*model.PdfPage, error) {
 		return nil, decorate(err)
 	}
 	// common.Log.Info("PDF Num Pages: %d %q\n", numPages, inPath)
+	firstPage = maxInt(1, firstPage)
+	lastPage = minInt(numPages, lastPage)
 
-	pages := make([]*model.PdfPage, numPages)
+	pages := make([]*model.PdfPage, lastPage-firstPage+1)
 	for pageNum := 1; pageNum <= numPages; pageNum++ {
+		if !(firstPage <= pageNum && pageNum <= lastPage) {
+			continue
+		}
 		decorate := func(err error) error { return fmt.Errorf("readPages %q page %d (%w)", inPath, pageNum, err) }
 		page, err := pdfReader.GetPage(pageNum)
 		if err != nil {
@@ -390,7 +421,7 @@ func readPages(inPath string) ([]*model.PdfPage, error) {
 			}
 			page.Rotate = nil
 		}
-		pages[pageNum-1] = page
+		pages[pageNum-firstPage] = page
 	}
 	return pages, nil
 }
@@ -421,7 +452,7 @@ func writePages(outPath string, pages []*model.PdfPage) error {
 
 // equalRects returns true if `r1` and `r2` have the same coordinates. It allows for rounding errors.
 func equalRects(r1, r2 model.PdfRectangle) bool {
-	const tol = 1.0e-3
+	const tol = 0.5
 	eq := func(x1, x2 float64) bool { return math.Abs(x1-x2) < tol }
 	return eq(r1.Llx, r2.Llx) && eq(r1.Lly, r2.Lly) && eq(r1.Urx, r2.Urx) && eq(r1.Ury, r2.Ury)
 }
@@ -440,6 +471,19 @@ func makeUsage(msg string) {
 		fmt.Fprintln(os.Stderr, msg)
 		usage()
 	}
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 //  160171 18 Jul 13:11 image.pdf   (Xerox mixed raster)
