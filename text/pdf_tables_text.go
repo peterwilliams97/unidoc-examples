@@ -58,12 +58,12 @@ func main() {
 	)
 	flag.StringVar(&outDir, "o", "./outtext", "Output text (default outtext). Set to \"\" to not save.")
 	flag.StringVar(&csvDir, "c", "./outcsv", "Output CSVs (default outtext). Set to \"\" to not save.")
-	flag.IntVar(&firstPage, "f", -1, "First page")
-	flag.IntVar(&lastPage, "l", 100000, "Last page")
-	flag.IntVar(&repeats, "r", 1, "repeat each page extraction this many time")
+	flag.IntVar(&firstPage, "f", -1, "First page.")
+	flag.IntVar(&lastPage, "l", 100000, "Last page.")
+	flag.IntVar(&repeats, "r", 1, "Repeat each page extraction this many time.")
 	flag.BoolVar(&debug, "d", false, "Print debugging information.")
 	flag.BoolVar(&trace, "e", false, "Print detailed debugging information.")
-	flag.BoolVar(&doProfile, "p", false, "Save profiling information")
+	flag.BoolVar(&doProfile, "p", false, "Save profiling information.")
 	makeUsage(usage)
 	flag.Parse()
 	args := flag.Args()
@@ -81,7 +81,7 @@ func main() {
 	}
 	if uniDocLicenseKey != "" {
 		if err := license.SetLicenseKey(uniDocLicenseKey, companyName); err != nil {
-			panic(fmt.Errorf("error loading UniDoc license: err=%w", err))
+			common.Log.Error("error loading UniDoc license: err=%v", err)
 		}
 		model.SetPdfCreator(companyName)
 	}
@@ -92,11 +92,11 @@ func main() {
 	if doProfile {
 		f, err := os.Create("cpu.profile")
 		if err != nil {
-			panic(fmt.Errorf("could not create CPU profile: ", err))
+			panic(fmt.Errorf("could not create CPU profile: err=%w", err))
 		}
 		defer f.Close()
 		if err := pprof.StartCPUProfile(f); err != nil {
-			panic(fmt.Errorf("could not start CPU profile: ", err))
+			panic(fmt.Errorf("could not start CPU profile: err=%w", err))
 		}
 		defer pprof.StopCPUProfile()
 	}
@@ -108,6 +108,8 @@ func main() {
 	fmt.Printf("%d PDF files", len(pathList))
 
 	var performances []performance
+	var tableCandidates []string
+	numCandidates := 0
 
 	t0 := time.Now()
 	for i, inPath := range pathList {
@@ -123,21 +125,25 @@ func main() {
 		if strings.ToLower(filepath.Ext(outPath)) == ".pdf" {
 			panic(fmt.Errorf("output can't be PDF %q", outPath))
 		}
-		fmt.Printf("%4d of %d: %q ", i+1, len(pathList), inPath)
+		fmt.Fprintf(os.Stderr, "%4d of %d: %q ", i+1, len(pathList), inPath)
 		var perf performance
-		err, important := extractDocText(inPath, outPath, csvPath, firstPage, lastPage, repeats, false, &perf)
-		fmt.Printf(": %.1f sec\n", perf.dt)
-		if err != nil {
-			if important {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+		err, important := extractDocTables(inPath, outPath, csvPath, firstPage, lastPage, repeats, false, &perf)
+		fmt.Fprintf(os.Stderr, ": %.1f sec\n", perf.dt)
+		if important {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			if err != nil {
+				continue
 			}
-			continue
+			tableCandidates = append(tableCandidates, inPath)
+			if numCandidates != len(tableCandidates) {
+				dumpFiles("candidates.txt", tableCandidates)
+				numCandidates = len(tableCandidates)
+			}
 		}
 		performances = append(performances, perf)
-		// if len(performances)%20 == 0 {
-		// 	logPeformances(performances)
-		// }
+		if len(performances)%500 == 0 {
+			logPeformances(performances)
+		}
 	}
 	dt := time.Since(t0)
 	fmt.Printf("\nDONE %.1f seconds\n", dt.Seconds())
@@ -167,16 +173,22 @@ type performance struct {
 	pages int
 }
 
-func (p performance) perPage() float64 { return p.dt / float64(p.pages) }
-
+// String returns a string describing `p`.
 func (p performance) String() string {
 	return fmt.Sprintf("%2d pages %5.1f sec %5.2f sec/page %s", p.pages, p.dt, p.perPage(), p.name)
 }
 
-// extractDocText extracts text columns pages `firstPage` to `lastPage` in PDF file `inPath` and
-//   - writes the extracted texe to `outPath`.
+func (p performance) perPage() float64 {
+	if p.pages == 0 {
+		return 0
+	}
+	return p.dt / float64(p.pages)
+}
+
+// extractDocTables extracts text columns pages `firstPage` to `lastPage` in PDF file `inPath` and
+//   - writes the extracted text to `outPath`.
 //   - writes any extracted tables to `csvPath`
-func extractDocText(inPath, outPath, csvPath string, firstPage, lastPage, repeats int, show bool,
+func extractDocTables(inPath, outPath, csvPath string, firstPage, lastPage, repeats int, show bool,
 	perf *performance) (error, bool) {
 	fmt.Printf("%q [%d:%d]->%q %.2f MB, ",
 		inPath, firstPage, lastPage, outPath, fileSize(inPath))
@@ -197,7 +209,7 @@ func extractDocText(inPath, outPath, csvPath string, firstPage, lastPage, repeat
 		return fmt.Errorf("GetNumPages failed. %q err=%w", inPath, err), false
 	}
 
-	fmt.Printf("%d pages:", numPages)
+	fmt.Fprintf(os.Stderr, "%d pages:", numPages)
 
 	if firstPage < 1 {
 		firstPage = 1
@@ -207,10 +219,11 @@ func extractDocText(inPath, outPath, csvPath string, firstPage, lastPage, repeat
 	}
 
 	var pageTexts []string
+	var pageNumbers []int
 	var pageTables [][]string
 
 	for pageNum := firstPage; pageNum <= lastPage; pageNum++ {
-		fmt.Printf("%d ", pageNum)
+		fmt.Fprintf(os.Stderr, "%d ", pageNum)
 		text, tables, err := extractAllPageContents(inPath, pdfReader, pageNum, repeats)
 		if err != nil {
 			return fmt.Errorf("extractAllPageContents failed. inPath=%q err=%w", inPath, err), true
@@ -223,10 +236,27 @@ func extractDocText(inPath, outPath, csvPath string, firstPage, lastPage, repeat
 			fmt.Println("----------------------------------------------------------------------")
 		}
 		pageTables = append(pageTables, tables)
+		pageNumbers = append(pageNumbers, pageNum)
 	}
 	perf.name = inPath
 	perf.pages = lastPage - firstPage + 1
 	perf.dt = time.Since(t0).Seconds()
+
+	important := func() bool {
+		// if numPages > 5 {
+		// 	return false
+		// }
+		n1 := 0
+		for _, tables := range pageTables {
+			if len(tables) == 1 {
+				n1++
+			}
+			if len(tables) > 1 {
+				return false
+			}
+		}
+		return n1 >= 3
+	}
 
 	if outPath != "" {
 		docText := strings.Join(pageTexts, "\n")
@@ -235,20 +265,21 @@ func extractDocText(inPath, outPath, csvPath string, firstPage, lastPage, repeat
 		}
 	}
 	if csvPath != "" {
+		fmt.Printf("\n %d pages\n", len(pageTables))
 		for i, tables := range pageTables {
 			if len(tables) == 0 {
 				continue
 			}
-			fmt.Printf("page%d: %d tables\n", i+1, len(pageTables))
+			fmt.Printf("page %d: %d tables\n", i+1, len(tables))
 			for j, table := range tables {
-				csvPath := fmt.Sprintf("%s.page%d.table%d.csv", csvPath, i+1, j+1)
+				csvPath := fmt.Sprintf("%s.page%d.table%d.csv", csvPath, pageNumbers[i], j+1)
 				if err := ioutil.WriteFile(csvPath, []byte(table), 0666); err != nil {
 					return fmt.Errorf("failed to write csvPath=%q err=%w", csvPath, err), true
 				}
 			}
 		}
 	}
-	return nil, false
+	return nil, important()
 }
 
 // extractAllPageContents extracts the text and tables from (1-offset) page number `pageNum` in opened
@@ -276,7 +307,7 @@ func _extractAllPageContents(inPath string, pdfReader *model.PdfReader, pageNum 
 
 	mbox, err := page.GetMediaBox()
 	if err != nil {
-		return "[COULDN'T PROCESS]", nil, nil
+		return "[COULDN'T PROCESS]", nil, err
 	}
 	fmt.Printf("%.0f ", *mbox)
 	if page.Rotate != nil && *page.Rotate == 90 {
@@ -315,7 +346,8 @@ func _extractAllPageContents(inPath string, pdfReader *model.PdfReader, pageNum 
 		return "", nil, fmt.Errorf("ExtractPageText failed. %q pageNum=%d err=%w", inPath, pageNum, err)
 	}
 	var tables []string
-	for _, table := range pageText.Tables() {
+	for i, table := range pageText.Tables() {
+		fmt.Printf("%4d: %d x %d", i, table.W, table.H)
 		tables = append(tables, toCsv(table))
 	}
 	// marks := pageText.Marks().Elements()
@@ -336,7 +368,11 @@ func toCsv(table extractor.TextTable) string {
 			err := fmt.Errorf("table = %d x %d row[%d]=%d %d", table.W, table.H, y, len(row), row)
 			panic(err)
 		}
-		csvwriter.Write(row)
+		parts := make([]string, table.W)
+		for i, cell := range row {
+			parts[i] = cell.Text
+		}
+		csvwriter.Write(parts)
 	}
 	csvwriter.Flush()
 	return b.String()
@@ -446,6 +482,18 @@ func changeDirExt(dirName, filename, qualifier, extName string) string {
 	path := filepath.Join(dirName, filename)
 	common.Log.Debug("changeDirExt(%q,%q,%q)->%q", dirName, base, extName, path)
 	return path
+}
+
+func dumpFiles(outPath string, candidates []string) {
+	f, err := os.Create(outPath)
+	if err != nil {
+		common.Log.Error("dumpFiles: Create failed. outPath=%q err=%v", outPath, err)
+		panic(err)
+	}
+	for i, o := range candidates {
+		fmt.Fprintf(f, "%4d: %s\n", i, o)
+	}
+	fmt.Fprintf(os.Stderr, "Wrote %d candidates to %q\n", len(candidates), outPath)
 }
 
 // ignoreError returns true if `err` should be ignored.
